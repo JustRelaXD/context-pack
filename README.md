@@ -203,6 +203,13 @@ serverless invocation.
 `app.listen()` and exports nothing, which is what produces
 `FUNCTION_INVOCATION_FAILED` on every path, including `/api/health`.
 
+One non-obvious build detail: **`installCommand` must include `--include=dev`.** Vercel sets
+`NODE_ENV=production` for the build, and npm treats that as "omit devDependencies" — so a plain
+`npm install` installs no build tooling at all and the build dies with `sh: 1: vite: not found`.
+Locally this never shows up, because your shell has no `NODE_ENV` set. The failure was reproduced
+and the fix verified by running the exact install and build commands from `vercel.json` against a
+fresh checkout in a production environment.
+
 Two consequences of running serverless, both stated rather than hidden:
 
 | Constraint | What happens |
