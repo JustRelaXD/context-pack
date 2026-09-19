@@ -245,9 +245,15 @@ function describeStatus(diagnostics: DiagnosticsResponse | null): string {
   if (!diagnostics) return "connecting…";
   const context = diagnostics.agent.find((entry) => entry.component === "context");
   const reasoning = diagnostics.agent.find((entry) => entry.component === "reasoning");
+  // Say out loud when storage is in-process: on a serverless deployment the
+  // user's confirmations genuinely do not survive, and discovering that by
+  // losing a trip is much worse than reading it here.
+  const store = diagnostics.store.durable
+    ? diagnostics.store.adapter
+    : `${diagnostics.store.adapter} (resets)`;
   return [
     `reads: ${context?.active ?? "?"}`,
     `words: ${reasoning?.active ?? "?"}`,
-    `store: ${diagnostics.store.adapter}`,
+    `store: ${store}`,
   ].join(" · ");
 }

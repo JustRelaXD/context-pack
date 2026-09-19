@@ -47,14 +47,32 @@ export interface CreateStoreOptions {
 }
 
 /**
+ * Which adapter to use when nobody said explicitly.
+ *
+ * On a serverless platform the filesystem is read-only apart from `/tmp`, so the
+ * JSON file adapter cannot work — it would throw `EROFS` on the first write, or
+ * worse, appear to save and lose everything between invocations. Defaulting to
+ * memory there keeps the app *functional and honest* rather than crashing: the
+ * trade-off is that state does not survive an invocation, which `describeStore`
+ * reports and the UI surfaces. Durable serverless storage means a real managed
+ * store (see the README), not a file.
+ */
+function resolveKind(options: CreateStoreOptions): string {
+  const explicit = options.kind ?? process.env.CONTEXTPACK_STORE;
+  if (explicit && explicit.trim()) return explicit.trim().toLowerCase();
+  if (process.env.VERCEL) return "memory";
+  return "json";
+}
+
+/**
  * The single place storage choice happens.
  *
- * `json` is the default because this is a local-first app; `dynamodb` is the
- * deployment swap and is deliberately not implemented yet — claiming support we
- * have not tested would be worse than a clear error.
+ * `json` is the default locally because this is a local-first app; `dynamodb` is
+ * the deployment swap and is deliberately not implemented yet — claiming support
+ * we have not tested would be worse than a clear error.
  */
 export function createStore(options: CreateStoreOptions = {}): Store {
-  const kind = (options.kind ?? process.env.CONTEXTPACK_STORE ?? "json").trim().toLowerCase();
+  const kind = resolveKind(options);
 
   if (kind === "memory") return createMemoryStore(options.seed);
 
@@ -69,11 +87,18 @@ export function createStore(options: CreateStoreOptions = {}): Store {
   );
 }
 
+export interface StoreDescription {
+  adapter: string;
+  file?: string;
+  /** False when the data lives only in this process and will vanish. */
+  durable: boolean;
+}
+
 /** Exposed for diagnostics: which adapter actually got constructed. */
-export function describeStore(store: Store): { adapter: string; file?: string } {
+export function describeStore(store: Store): StoreDescription {
   const json = store as Partial<JsonStore>;
   if (typeof json.flush === "function" && typeof json.file === "string") {
-    return { adapter: "json", file: json.file };
+    return { adapter: "json", file: json.file, durable: true };
   }
-  return { adapter: "memory" };
+  return { adapter: "memory", durable: false };
 }

@@ -190,6 +190,32 @@ serialises writes and writes via temp-file + rename, so an interrupted write can
 store. The API contract lives in `shared`, so a server field change breaks the build rather than
 silently rendering `undefined`.
 
+### Deploying to Vercel
+
+The repo ships with `vercel.json` and `api/index.ts`, so a Git-connected Vercel project needs one
+thing from you: **Framework Preset must be `Other`.** The *Express* preset is the wrong fit and will
+fail — it looks for a conventional single-file Express entry, whereas this is a monorepo whose server
+binds a port, loads a `.env`, traps signals and flushes a file store. None of that exists in a
+serverless invocation.
+
+`api/index.ts` is the deployment target: one function that Express routes internally, with
+`/api/*` rewritten to it. It deliberately does **not** import `server/src/index.ts` — that file calls
+`app.listen()` and exports nothing, which is what produces
+`FUNCTION_INVOCATION_FAILED` on every path, including `/api/health`.
+
+Two consequences of running serverless, both stated rather than hidden:
+
+| Constraint | What happens |
+|---|---|
+| The filesystem is read-only apart from `/tmp` | `CONTEXTPACK_STORE=json` cannot work, so the adapter defaults to `memory` when it sees `VERCEL`. `/api/diagnostics` reports `durable: false` and the UI header shows `store: memory (resets)`. |
+| Nothing persists between invocations | A deployed instance starts with no history, so a visitor sees the cold-start view: honest 50/50 guesses rather than a fake track record. Run locally for the full seeded demo. |
+
+Set `TYPESAFE_API_KEY` and `GROQ_API_KEY` in the project's environment variables if you want the
+model-backed path in the deployment; without them it runs on the rule-based parser and templated
+sentences, which is still fully functional.
+
+Durable serverless state needs a real store — that is what the `dynamodb` adapter row below is for.
+
 ### The deploy path (what is and isn't done)
 
 Built locally, deployable as-is to a single process — which is honest about what it is:

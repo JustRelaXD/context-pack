@@ -85,7 +85,7 @@ export function tripSummary(overrides: Partial<TripSummary> = {}): TripSummary {
 
 export function diagnostics(): DiagnosticsResponse {
   return {
-    store: { adapter: "memory" },
+    store: { adapter: "memory", durable: false },
     weather: "Open-Meteo",
     agent: [
       { component: "context", active: "jev", detail: "Jev" },

@@ -86,7 +86,8 @@ export interface AgentDiagnostic {
 }
 
 export interface DiagnosticsResponse {
-  store: { adapter: string; file?: string };
+  /** `durable: false` means storage lives in the process and will not survive. */
+  store: { adapter: string; file?: string; durable: boolean };
   weather: string;
   agent: AgentDiagnostic[];
   keys: Record<string, boolean | string>;

@@ -199,6 +199,19 @@ export function createApp(options: AppOptions) {
     }),
   );
 
+  /**
+   * Unknown API paths must answer in JSON.
+   *
+   * Every client call parses its response as JSON, so Express's default HTML
+   * 404 page arrives as a confusing parse error in the UI instead of "no such
+   * route" — and on a serverless deployment it is indistinguishable from the
+   * app being broken. Registered before the static fallback, which deliberately
+   * excludes `/api/` anyway.
+   */
+  app.use("/api", (_req, res) => {
+    res.status(404).json({ error: "No such API route." });
+  });
+
   if (options.serveWeb) {
     const dist = resolve(findRepoRoot(), "apps", "web", "dist");
     if (existsSync(dist)) {
