@@ -1,0 +1,223 @@
+# ContextPack
+
+**It learns what you take on different outings, and warns you before you leave.**
+
+Everyone has left the house and realised at the gate that the charger is still on the desk. The
+usual answer is a checklist app, which just moves the problem: now you also have to maintain the
+checklist.
+
+ContextPack is the other approach. You say where you're going in your own words — *"college for a
+lab"*, *"I'm going to a hackathon"* — and it answers with what you historically take, how confident
+it is, and **why**, quoting your own logged trips. Confirm or skip each item and it learns. It also
+learns the exceptions, so *"I don't need my laptop today"* is recorded as an exception rather than
+overridden.
+
+The product thesis, in one line:
+
+> Don't make people maintain checklists. Learn their routines, recognise the context, predict what
+> they might need, explain why, and learn from their corrections.
+
+---
+
+## The honest-claims rule
+
+This is the part we actually care about, because a prediction app that overstates itself is
+worthless the first time it's wrong.
+
+| Claim | How it's enforced |
+|---|---|
+| "You confirmed your charger on 14 of your last 16 college trips" | Every number in a sentence comes from `ItemEvidence`, filled from the database. A Groq rewrite is **discarded** if it contains any number we did not supply (`numbersIntroduced`). |
+| `confirmed` / `detected` / `inferred` are different things | `ConfirmationSource` is on every stored decision. Only an explicit "packed" counts as fact; everything else is `inferred`. Nothing in this app claims to detect physical objects. |
+| The engine never reaches 100% | Global rates shrink toward a neutral prior, and the UI caps the display at 99%. Even 30 perfect trips yields ~99.8%, never certainty. |
+| "You took" vs "you confirmed" | Statistics are only ever phrased as confirmations, because that is all we have. |
+| Unanswered predictions teach nothing | Rows the app creates for you are written as `unanswered` + `inferred` and are excluded from the predictor's statistics. |
+| A past prediction is not rewritten | The probability shown at trip time is stored on the row and never updated. The live estimate appears beside it, so history can always be audited. |
+
+---
+
+## How it works
+
+```
+ "college for a lab"
+        │
+        ▼
+  ┌───────────────┐    Jev (System One) reads the situation:
+  │ context layer │    destination=college, purpose=lab, tags=[academic,lab]
+  └───────────────┘    …falls back to keyword parsing if unavailable
+        │
+        ▼
+  ┌───────────────┐    pure TypeScript, deterministic:
+  │    engine     │    hierarchical Laplace smoothing over 4 evidence scopes,
+  └───────────────┘    weather conditioning, exception damping, co-occurrence
+        │
+        ▼
+  ┌───────────────┐    Groq rephrases the engine's own sentence.
+  │  phrasing     │    Any invented number → discarded, template kept.
+  └───────────────┘
+        │
+        ▼
+  Charger 97% · ID card 99% · Umbrella 61%   →  Packed / Not needed / Why?
+        │
+        ▼
+   stored  →  tomorrow's predictions are different because of today's answers
+```
+
+### The four evidence scopes
+
+The heart of the learning model is one question: *how similar is a past trip to this one?*
+
+| Scope | Weight | Meaning |
+|---|---|---|
+| `exact` | 1.0 | same destination, same purpose (or matching tags) |
+| `destination` | 0.35 | same place, different reason |
+| `sibling` | 0.5 | **different** place, same kind of outing |
+| `global` | 0.15 | unrelated — only ever a weak prior |
+
+`sibling` deliberately outweighs `destination`. The same *kind of outing* at a new place tells you
+more about what someone carries than the same building for a different reason — which is how an
+unheard-of hackathon predicts your project-night habits (laptop, charger, extension board) better
+than your campus sports trips do. That is analogous-context prediction, and it falls out of the
+weights rather than being a special case.
+
+### Weather is a real condition, not a sentence
+
+When a trip has a known weather state and at least two trips in that same state are on record, the
+estimate is **conditioned** on it: the all-weather rate becomes the prior, the weather-matched trips
+become the evidence. So an umbrella goes from *not shown at all* on a dry day to ~61% in the rain,
+with the reason quoting only the rainy subset. A single wet afternoon cannot move anything, and a
+trip with **no** weather recorded is treated as unknown, never as "clear".
+
+### Exceptions, not corrections
+
+- A same-day "not needed" suppresses today's alert and is recorded as evidence.
+- *"I don't need this from now on"* becomes a `recurring` rule that **damps** the prediction rather
+  than deleting it, so it can still surface when the situation changes.
+- Defaulting to "today only" is deliberate: silently turning "not today" into "never" is the most
+  annoying thing a system like this can do.
+
+---
+
+## Who does what
+
+| Layer | Owner | Why |
+|---|---|---|
+| Item likelihoods | **code** | Rules that must not be hallucinated |
+| Context extraction | **Jev** (`choice`, `noul`, `score`) | A closed-label decision, 70–500ms, no strings to parse |
+| Exception parsing | **Jev** | Judgement over a fixed vocabulary |
+| Sentence phrasing | **Groq** | Jev returns typed decisions and cannot write prose |
+| Everything else | **code** | Deterministic, unit-tested, offline-capable |
+
+**Every AI layer is optional.** With no keys at all the app runs end to end on the rule-based
+parser and templated sentences — `CONTEXTPACK_AGENT=heuristic` forces exactly that, and it is what
+the test suite uses. A rate limit degrades the wording, never the app.
+
+---
+
+## Run it
+
+Requires Node 20+. No AWS account, no credit card, no cloud spend.
+
+```bash
+npm install
+npm run seed          # ~56 days of believable history so the learning is visible
+npm run demo          # build the UI and serve everything on http://localhost:4000
+```
+
+Or for development, in two terminals:
+
+```bash
+npm run dev:server    # API on :4000
+npm run dev:web       # UI on :5173, proxying /api
+```
+
+Optional keys (everything works without them):
+
+```bash
+cp .env.example .env  # TYPESAFE_API_KEY=..., GROQ_API_KEY=...
+npm run doctor        # validates keys, models and adapters without spending a generation
+```
+
+`npm run doctor` is worth running before a demo: it caught two real problems during the build — a
+Groq model that no longer existed on the account, and an environment variable exported with a
+typo'd name.
+
+### Tests
+
+```bash
+npm test        # 69 tests
+npm run typecheck
+```
+
+`service.test.ts` is the demo script asserted numerically: the learning curve, the weather lift, the
+analogous-context match, the exception flow, and the honesty guarantees (unanswered predictions
+never become evidence, a stored probability is never rewritten). `predict.test.ts` pins the engine's
+edge cases, including that a single wet afternoon cannot move a prediction. `App.test.tsx` renders
+the real screens against mocked API responses — it is what caught a crash where a missing field took
+the whole app down — and asserts that 0.999 renders as **99%**, never 100%.
+
+---
+
+## Suggested 3-minute demo
+
+1. **Cold start.** Say *"college for a lab"*. Everything is a 50/50 guess and the app says so:
+   *"This is a guess, not a memory."*
+2. **Learn.** Confirm a few items. The next trip is already different.
+3. **Recalled.** Run the seed for the full picture: **99% ID card, 84% laptop, 75% lab kit** with
+   *"you confirmed your ID card on 31 of your last 31 clear college trips"*.
+4. **Weather.** The same trip in rain picks up the umbrella, quoting only the rainy subset —
+   *"you confirmed your umbrella on 3 of your last 4 rainy college trips"*. On a dry day it isn't
+   shown at all.
+5. **Analogy.** *"I'm going to a hackathon"* — never logged, yet it suggests laptop, charger and
+   extension board from your project nights, marked as a suggestion rather than an alert.
+6. **Exception.** *"I don't need my laptop today"* → recorded, alert suppressed immediately, and the
+   row shows both *what we said then* and *what we think now*.
+7. **Audit.** The **Learned** tab shows the raw counts behind every prediction, and lets you forget
+   an exception.
+
+---
+
+## Architecture
+
+```
+apps/web      React + Vite, mobile-first, no UI framework
+apps/server   Node + Express: API, trip lifecycle, AI adapters, Open-Meteo
+packages/shared  domain model, the prediction engine, pattern aggregation, the API contract
+data/store.json  local persistence (gitignored)
+```
+
+Storage sits behind one `Store` interface with two adapters (`json`, `memory`). The `json` adapter
+serialises writes and writes via temp-file + rename, so an interrupted write can't corrupt the
+store. The API contract lives in `shared`, so a server field change breaks the build rather than
+silently rendering `undefined`.
+
+### The deploy path (what is and isn't done)
+
+Built locally, deployable as-is to a single process — which is honest about what it is:
+
+| Piece | Local (built) | AWS (next) |
+|---|---|---|
+| UI | Vite build, served by the API | Amplify Hosting or the same process on App Runner |
+| API | Express on :4000 | API Gateway + Lambda |
+| Store | `json` adapter | `CONTEXTPACK_STORE=dynamodb` — same interface, one new adapter |
+| Context + exceptions | Jev | unchanged |
+| Phrasing | Groq | swap to Bedrock (same `ReasonPhraser` interface) |
+
+We deliberately did **not** wire up EventBridge, Step Functions, Cognito or OpenSearch. None of them
+are load-bearing for a CRUD app with one stats query, and a hackathon weekend spent on wiring them
+would have bought nothing the demo can show. `CONTEXTPACK_STORE=dynamodb` currently fails loudly
+rather than pretending to work.
+
+---
+
+## Known limits
+
+- **The item catalog is closed** (20 items). The agent can only choose from it, which is what stops
+  it inventing items for you to maintain — but it also means novel items can't be learned yet. The
+  Learned tab lists anything you carried that it couldn't use.
+- **Predictions are for items, not actions.** "Leave 10 minutes earlier" was in the brief and is not
+  built.
+- **One user.** No auth, no accounts; anything multi-user needs Cognito and a partition key.
+- **The engine is deliberately not ML.** It's weighted hierarchical smoothing. When it says 91%, it
+  means "14 of 15 in this context" — checkable by hand, which matters more here than sophistication.
+- **Weather is rain/snow/temperature only**, and it won't geocode a place name that Open-Meteo
+  doesn't know; when that happens the trip is logged normally without weather.

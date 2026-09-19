@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# local secrets
+.env
+.env.local
+
+# local JSON store (dev data, not source)
+.data/
+data/
+
+.DS_Store
+*.log
