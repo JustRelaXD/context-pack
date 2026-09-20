@@ -1,6 +1,8 @@
 import type {
   ContextException,
   DiagnosticsResponse,
+  Item,
+  ItemSuggestion,
   LearningOverview,
   TripItemView,
   TripSummary,
@@ -8,6 +10,14 @@ import type {
 } from "@contextpack/shared";
 
 /** Fixtures for the UI tests. Deliberately awkward in one place each. */
+
+export function catalog(): Item[] {
+  return [
+    { id: "charger", name: "Charger", category: "tech", emoji: "🔌" },
+    { id: "id-card", name: "ID card", category: "identity", emoji: "🪪" },
+    { id: "laptop", name: "Laptop", category: "tech", emoji: "💻" },
+  ];
+}
 
 export function itemView(overrides: Partial<TripItemView> = {}): TripItemView {
   return {
@@ -69,6 +79,18 @@ export function tripView(overrides: Partial<TripView> = {}): TripView {
   };
 }
 
+export function suggestion(overrides: Partial<ItemSuggestion> = {}): ItemSuggestion {
+  return {
+    id: "lab-coat",
+    name: "Lab coat",
+    emoji: "👕",
+    category: "clothing",
+    plausibility: 0.91,
+    source: "groq",
+    ...overrides,
+  };
+}
+
 export function tripSummary(overrides: Partial<TripSummary> = {}): TripSummary {
   return {
     id: "trip-1",
@@ -83,7 +105,7 @@ export function tripSummary(overrides: Partial<TripSummary> = {}): TripSummary {
   };
 }
 
-export function diagnostics(): DiagnosticsResponse {
+export function diagnostics(overrides: Partial<DiagnosticsResponse> = {}): DiagnosticsResponse {
   return {
     store: { adapter: "memory", durable: false },
     weather: "Open-Meteo",
@@ -93,6 +115,9 @@ export function diagnostics(): DiagnosticsResponse {
       { component: "reasoning", active: "groq", detail: "Groq" },
     ],
     keys: { TYPESAFE_API_KEY: true },
+    resetEnabled: true,
+    canLoadExample: false,
+    ...overrides,
   };
 }
 

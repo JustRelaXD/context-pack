@@ -204,6 +204,38 @@ async function checkAdapters(): Promise<Result[]> {
       : "returned null",
   });
 
+  // The one path where a model writes something the user reads. Two failure modes
+  // are worth catching here rather than in front of an audience: a proposal with
+  // no plausibility (Jev unreachable) still works, but a *silent* fall back to the
+  // generic list means the model never ran at all.
+  const proposed = await layer.itemSuggester.suggest({
+    destination: "college",
+    purpose: "lab",
+    tags: ["academic", "lab"],
+    exclude: [],
+    limit: 6,
+  });
+  const scored = proposed.filter((item) => item.plausibility !== undefined);
+  results.push({
+    name: `item suggester (${layer.itemSuggester.name})`,
+    status: proposed.length > 0 ? "ok" : "failed",
+    detail:
+      proposed.length > 0
+        ? `${proposed.length} proposed, ${scored.length} scored by jev — ${proposed
+            .slice(0, 4)
+            .map((item) => `${item.name}${item.plausibility === undefined ? "" : `(${item.plausibility.toFixed(2)})`}`)
+            .join(", ")}`
+        : "nothing proposed",
+  });
+  if (layer.itemSuggester.name === "groq" && proposed.every((item) => item.source === "heuristic")) {
+    results.push({
+      name: "item suggester — generation degraded",
+      status: "degraded",
+      detail:
+        "Groq is configured but every proposal came from the rule-based table, so the model call failed",
+    });
+  }
+
   const templated = "You confirmed your charger on 14 of your last 16 college lab trips.";
   const phrased = await layer.reasonPhraser.phrase(templated, [14, 16]);
   const introduced = numbersIntroduced(phrased, [14, 16]);

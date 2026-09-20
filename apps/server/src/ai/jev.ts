@@ -62,6 +62,20 @@ export function readNoul(answer: unknown): number | undefined {
 }
 
 /**
+ * A rubric answer, normalised to 0…1.
+ *
+ * `score` returns an *expected* score, so a model that is torn between "unlikely"
+ * and "plausible" answers 0.5 — which is information, and better than forcing it
+ * to pick a side.
+ */
+export function readScore(answer: unknown, levels: number): number | undefined {
+  const value = answer as { type?: string; score?: number } | undefined;
+  if (!value || value.type !== "score" || typeof value.score !== "number") return undefined;
+  if (levels <= 1) return undefined;
+  return Math.min(1, Math.max(0, value.score / (levels - 1)));
+}
+
+/**
  * Build a `choice` criteria map.
  *
  * Labels are synthetic (`v0`, `v1`) so user-supplied strings can never collide

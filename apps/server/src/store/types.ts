@@ -1,11 +1,19 @@
 import type {
   ContextException,
+  Item,
   LearningSample,
   Trip,
   TripItem,
   User,
   UserPreferences,
 } from "@contextpack/shared";
+
+/** An item the user added themselves, scoped to them. */
+export interface CustomItemRecord {
+  userId: string;
+  item: Item;
+  createdAt: string;
+}
 
 /**
  * Everything the app persists, behind one interface.
@@ -38,6 +46,9 @@ export interface Store {
    * JSON and DynamoDB adapters would fetch this very differently.
    */
   listSamples(userId: string, limit?: number): Promise<LearningSample[]>;
+
+  listCustomItems(userId: string): Promise<Item[]>;
+  putCustomItem(userId: string, item: Item): Promise<Item>;
 
   listExceptions(userId: string): Promise<ContextException[]>;
   putException(exception: ContextException): Promise<ContextException>;

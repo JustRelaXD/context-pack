@@ -1,12 +1,13 @@
 import type {
   ContextException,
+  Item,
   LearningSample,
   Trip,
   TripItem,
   User,
   UserPreferences,
 } from "@contextpack/shared";
-import { tripItemKey, type Store } from "./types";
+import { tripItemKey, type CustomItemRecord, type Store } from "./types";
 
 export interface StoreSnapshot {
   version: 1;
@@ -14,10 +15,12 @@ export interface StoreSnapshot {
   trips: Trip[];
   tripItems: TripItem[];
   exceptions: ContextException[];
+  /** Added later; older stores simply have none. */
+  customItems?: CustomItemRecord[];
 }
 
 export function emptySnapshot(): StoreSnapshot {
-  return { version: 1, users: [], trips: [], tripItems: [], exceptions: [] };
+  return { version: 1, users: [], trips: [], tripItems: [], exceptions: [], customItems: [] };
 }
 
 /**
@@ -118,6 +121,23 @@ export function createMemoryStore(initial: StoreSnapshot = emptySnapshot()): Mem
       );
     },
 
+    async listCustomItems(userId): Promise<Item[]> {
+      return (state.customItems ?? [])
+        .filter((record) => record.userId === userId)
+        .map((record) => record.item);
+    },
+
+    async putCustomItem(userId, item) {
+      if (!state.customItems) state.customItems = [];
+      const index = state.customItems.findIndex(
+        (record) => record.userId === userId && record.item.id === item.id,
+      );
+      const record = { userId, item, createdAt: new Date().toISOString() };
+      if (index === -1) state.customItems.push(record);
+      else state.customItems[index] = record;
+      return item;
+    },
+
     async listExceptions(userId) {
       return state.exceptions.filter((exception) => exception.userId === userId);
     },
@@ -143,6 +163,7 @@ export function createMemoryStore(initial: StoreSnapshot = emptySnapshot()): Mem
       state.trips = [];
       state.tripItems = [];
       state.exceptions = [];
+      state.customItems = [];
     },
 
     snapshot() {

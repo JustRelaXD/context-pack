@@ -4,7 +4,9 @@ import type {
   ConfirmationSource,
   ContextException,
   Item,
+  ItemCategory,
   ItemEvidence,
+  ItemSuggestion,
   Trip,
   TripContext,
   UserAction,
@@ -80,7 +82,7 @@ export interface LearningOverview {
 }
 
 export interface AgentDiagnostic {
-  component: "context" | "exceptions" | "reasoning";
+  component: "context" | "exceptions" | "reasoning" | "suggestions";
   active: ContextSource;
   detail: string;
 }
@@ -91,6 +93,15 @@ export interface DiagnosticsResponse {
   weather: string;
   agent: AgentDiagnostic[];
   keys: Record<string, boolean | string>;
+  /**
+   * Whether `POST /api/reset` will be honoured.
+   *
+   * The UI hides its "start over" control unless this is true, so a disabled
+   * endpoint shows up as an absent button rather than a button that errors.
+   */
+  resetEnabled: boolean;
+  /** Whether example history may be loaded (false once there is real history). */
+  canLoadExample: boolean;
 }
 
 /** One item's parsed correction, enriched for display. */
@@ -118,4 +129,47 @@ export interface CatalogResponse {
 
 export interface ExceptionsResponse {
   exceptions: ContextException[];
+}
+
+/**
+ * Candidate items for a trip, from the agent rather than from history.
+ *
+ * These are deliberately not part of `TripView`. Generating them costs a model
+ * call, and making the trip wait on one would mean a slower screen in exchange
+ * for rows that arrive second anyway — the UI fetches this separately and lets
+ * them appear underneath the real predictions.
+ */
+export interface SuggestionsResponse {
+  suggestions: ItemSuggestion[];
+  /** Which layer produced the list. */
+  source: ContextSource;
+  /** Why the list is empty, when it is. Shown verbatim. */
+  note?: string;
+}
+
+export interface CreateItemRequest {
+  name: string;
+  /** Optional emoji; one is chosen from the category when omitted. */
+  emoji?: string;
+  category?: ItemCategory;
+}
+
+export interface CreateItemResponse {
+  item: Item;
+  /** False when this matched an item that already exists (including the catalog). */
+  created: boolean;
+}
+
+/**
+ * Example history, generated on request.
+ *
+ * This is what makes the app demonstrable on a fresh machine or a serverless
+ * deployment with no database: the visitor gets a filled-in app in one tap
+ * instead of staring at twenty coin flips. It is labelled as example data
+ * everywhere it appears, and it is refused once you have real history of your
+ * own — mixing the two would make every count untrustworthy.
+ */
+export interface DemoDataResponse {
+  created: { trips: number; decisions: number };
+  contextGroups: number;
 }

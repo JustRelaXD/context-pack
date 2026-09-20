@@ -12,6 +12,11 @@ it is, and **why**, quoting your own logged trips. Confirm or skip each item and
 learns the exceptions, so *"I don't need my laptop today"* is recorded as an exception rather than
 overridden.
 
+You never type a list. On a trip it has never seen, the app proposes items itself — *Lab coat,
+Safety goggles, Calculator* for a lab — and each one you tap becomes a real item with real counts
+behind it from then on. Those proposals carry no probability, because nothing has been observed
+about them yet.
+
 The product thesis, in one line:
 
 > Don't make people maintain checklists. Learn their routines, recognise the context, predict what
@@ -32,6 +37,7 @@ worthless the first time it's wrong.
 | "You took" vs "you confirmed" | Statistics are only ever phrased as confirmations, because that is all we have. |
 | Unanswered predictions teach nothing | Rows the app creates for you are written as `unanswered` + `inferred` and are excluded from the predictor's statistics. |
 | A past prediction is not rewritten | The probability shown at trip time is stored on the row and never updated. The live estimate appears beside it, so history can always be audited. |
+| A proposed item is not a prediction | Suggestions carry no probability, are stored nowhere, and teach the engine nothing until you tap one. The source is on screen: *proposed by AI* vs *common for this kind of trip*. |
 
 ---
 
@@ -79,6 +85,35 @@ unheard-of hackathon predicts your project-night habits (laptop, charger, extens
 than your campus sports trips do. That is analogous-context prediction, and it falls out of the
 weights rather than being a special case.
 
+### Proposing items without inventing evidence
+
+The catalog is closed so the engine can never predict something a person did not choose — but that
+also means an app with no history has nothing useful to say, and a real person carries things we
+never thought of. The suggestion list resolves that tension in three steps:
+
+1. **Groq proposes** — the one job that genuinely needs a generative model, because Jev cannot
+   write the string "lab coat".
+2. **Jev scores** each candidate with a `score` rubric (*unlikely / plausible / likely for this
+   outing*), and anything below *plausible* is dropped. One request scores the whole batch.
+3. **The user adopts** — tapping a suggestion creates the item and marks it packed.
+
+What makes this safe is what a suggestion does *not* do: it carries no probability (there are no
+observations behind it, so a percentage would be fabricated), it is not stored on the trip, and it
+teaches the engine nothing until the user taps it. The UI labels the source — *proposed by AI* for a
+model-written list, *common for this kind of trip* for the rule-based table — and shows Jev's
+verdict as words (*usually taken*), never as a number that could be mistaken for a real prediction.
+
+Measured on the live keys, that produces things history alone never could:
+
+| You type | Proposed |
+|---|---|
+| `college for a lab` | Lab coat, Safety goggles, Lab notebook, Pen, Calculator |
+| `heading to the gym` | Gym bag, Towel, Gym shoes, Workout clothes, Gym membership card |
+| `going to a new flat` | Backpack, Phone, Wallet, Notebook, Water bottle |
+
+Anyone not on this screen is filtered out before it is shown, so the list never repeats the
+predictions above it.
+
 ### Weather is a real condition, not a sentence
 
 When a trip has a known weather state and at least two trips in that same state are on record, the
@@ -102,9 +137,10 @@ trip with **no** weather recorded is treated as unknown, never as "clear".
 | Layer | Owner | Why |
 |---|---|---|
 | Item likelihoods | **code** | Rules that must not be hallucinated |
-| Context extraction | **Jev** (`choice`, `noul`, `score`) | A closed-label decision, 70–500ms, no strings to parse |
+| Context extraction | **Jev** (`choice`, `noul`) | A closed-label decision, 70–500ms, no strings to parse |
 | Exception parsing | **Jev** | Judgement over a fixed vocabulary |
-| Sentence phrasing | **Groq** | Jev returns typed decisions and cannot write prose |
+| Item proposals | **Groq** generates, **Jev** scores (`score`) | Writing names needs a generative model; judging them does not. Jev returns typed decisions and cannot write prose, so Groq names and Jev ranks |
+| Sentence phrasing | **Groq** | Jev cannot write prose either |
 | Everything else | **code** | Deterministic, unit-tested, offline-capable |
 
 **Every AI layer is optional.** With no keys at all the app runs end to end on the rule-based
@@ -139,12 +175,13 @@ npm run doctor        # validates keys, models and adapters without spending a g
 
 `npm run doctor` is worth running before a demo: it caught two real problems during the build — a
 Groq model that no longer existed on the account, and an environment variable exported with a
-typo'd name.
+typo'd name. It now also reports whether the suggester is really generating (*"6 proposed, 6 scored
+by jev"*) or silently degraded to the rule-based table.
 
 ### Tests
 
 ```bash
-npm test        # 69 tests
+npm test        # 113 tests
 npm run typecheck
 ```
 
@@ -160,8 +197,10 @@ the whole app down — and asserts that 0.999 renders as **99%**, never 100%.
 ## Suggested 3-minute demo
 
 1. **Cold start.** Say *"college for a lab"*. Everything is a 50/50 guess and the app says so:
-   *"This is a guess, not a memory."*
-2. **Learn.** Confirm a few items. The next trip is already different.
+   *"This is a guess, not a memory."* Underneath, the agent proposes things history cannot know
+   yet — *Lab coat, Safety goggles, Lab notebook* — with no percentages on them.
+2. **Learn.** Confirm a few items. The next trip is already different. Tapping a proposed item
+   adopts it, and from then on it is predicted from real counts like everything else.
 3. **Recalled.** Run the seed for the full picture: **99% ID card, 84% laptop, 75% lab kit** with
    *"you confirmed your ID card on 31 of your last 31 clear college trips"*.
 4. **Weather.** The same trip in rain picks up the umbrella, quoting only the rainy subset —
@@ -233,6 +272,7 @@ Built locally, deployable as-is to a single process — which is honest about wh
 | API | Express on :4000 | API Gateway + Lambda |
 | Store | `json` adapter | `CONTEXTPACK_STORE=dynamodb` — same interface, one new adapter |
 | Context + exceptions | Jev | unchanged |
+| Item proposals | Groq generates, Jev ranks | either half swaps behind `ItemSuggester` |
 | Phrasing | Groq | swap to Bedrock (same `ReasonPhraser` interface) |
 
 We deliberately did **not** wire up EventBridge, Step Functions, Cognito or OpenSearch. None of them
@@ -244,9 +284,14 @@ rather than pretending to work.
 
 ## Known limits
 
-- **The item catalog is closed** (20 items). The agent can only choose from it, which is what stops
-  it inventing items for you to maintain — but it also means novel items can't be learned yet. The
-  Learned tab lists anything you carried that it couldn't use.
+- **The engine only predicts items you have confirmed.** The catalog is closed at 20 items and the
+  agent can only *propose* from outside it — nothing becomes predictable until you adopt it, and
+  adopted items are ordinary user items from then on. So "the model suggested it" can never become
+  "the app claims you took it".
+- **Suggestion quality depends on the provider.** With no Groq key, proposals come from a hand-written
+  table of common items by kind of outing: useful, but the same advice for everyone going to a gym.
+  With a key, they are tailored and Jev-ranked; a rate limit degrades to the table without telling you,
+  which is why the doctor reports which path actually ran.
 - **Predictions are for items, not actions.** "Leave 10 minutes earlier" was in the brief and is not
   built.
 - **One user.** No auth, no accounts; anything multi-user needs Cognito and a partition key.

@@ -1,4 +1,4 @@
-import type { ConfidenceTier, TripContext } from "@contextpack/shared";
+import type { ConfidenceTier, TripContext, TripItemView } from "@contextpack/shared";
 
 /**
  * Percentages are capped at 99%, in the UI as well as the engine.
@@ -9,6 +9,29 @@ import type { ConfidenceTier, TripContext } from "@contextpack/shared";
  */
 export function percent(value: number): string {
   return `${Math.min(99, Math.max(0, Math.round(value * 100)))}%`;
+}
+
+/**
+ * The one-line reason under an item's name.
+ *
+ * A row has room for about eight words, and the full explanation is a sentence
+ * with numbers in it. So the row gets a count and the "Why?" panel gets the
+ * sentence — that is the whole reason the panel exists, rather than it being a
+ * place to hide the interesting part.
+ */
+export function evidenceSummary(item: TripItemView): string {
+  const { observations, confirmations } = item.evidence;
+  if (item.unpredicted) return "You added this yourself";
+  if (observations === 0) return "No history yet — first guess";
+  const scope =
+    item.evidence.primaryScope === "exact"
+      ? "trip like this"
+      : item.evidence.primaryScope === "sibling"
+        ? "similar trips"
+        : item.evidence.primaryScope === "destination"
+          ? "trips here"
+          : "all trips";
+  return `${confirmations} of ${observations} ${scope}`;
 }
 
 export function ratio(confirmations: number, observations: number): string {

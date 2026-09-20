@@ -43,6 +43,7 @@ function readSnapshot(file: string): { snapshot: StoreSnapshot; error: string | 
         trips: parsed.trips ?? [],
         tripItems: parsed.tripItems ?? [],
         exceptions: parsed.exceptions ?? [],
+        customItems: parsed.customItems ?? [],
       },
       error: null,
     };
@@ -120,6 +121,13 @@ export function createJsonStore(options: JsonStoreOptions): JsonStore {
 
     async listSamples(userId, limit) {
       return memory.listSamples(userId, limit);
+    },
+
+    async listCustomItems(userId) {
+      return memory.listCustomItems(userId);
+    },
+    async putCustomItem(userId, item) {
+      return after(await memory.putCustomItem(userId, item));
     },
 
     async listExceptions(userId) {

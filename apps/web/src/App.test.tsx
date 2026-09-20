@@ -1,13 +1,23 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { diagnostics, exception, itemView, learning, tripSummary, tripView } from "./test/fixtures";
+import {
+  catalog,
+  diagnostics,
+  exception,
+  itemView,
+  learning,
+  suggestion,
+  tripSummary,
+  tripView,
+} from "./test/fixtures";
 import { installMockFetch } from "./test/mock-fetch";
 
 /**
  * These are wiring tests, not design tests: they prove the screens render real
- * server data, that actions hit the right endpoint, and that the trust rules
- * survive into the markup (99% is never 100%).
+ * server data, that a tap hits the right endpoint with the right body, and that
+ * the trust rules survive into the markup (99% is never 100%, and a row the user
+ * never answered never becomes evidence).
  */
 
 afterEach(() => {
@@ -20,8 +30,28 @@ function renderApp(options: Parameters<typeof installMockFetch>[0]) {
   return mock;
 }
 
-describe("quick log", () => {
-  it("offers suggestions from past trips and starts a trip with the typed text", async () => {
+/**
+ * Wait until the trip screen has rendered *and* its follow-up request has been
+ * issued. Starting a trip mounts a screen that fetches its own suggestions, and
+ * ending the test on the POST alone leaves that request in flight past teardown —
+ * where it hits the real network instead of the mock.
+ */
+async function expectTripView(calls: Array<{ url: string }>) {
+  expect(await screen.findByText(/tap the ones you have/)).toBeTruthy();
+  await waitFor(() => {
+    expect(calls.some((call) => call.url.includes("/suggestions"))).toBe(true);
+  });
+}
+
+/** Start a trip by typing, the way a first-time user would. */
+async function startTypedTrip(text = "college for a lab") {
+  const input = await screen.findByLabelText("Where are you going?");
+  fireEvent.change(input, { target: { value: text } });
+  fireEvent.click(screen.getByRole("button", { name: "Work out what to take" }));
+}
+
+describe("start screen", () => {
+  it("starts a trip with one tap on a suggestion from a past trip", async () => {
     const { calls } = renderApp({
       diagnostics: diagnostics(),
       trips: { trips: [tripSummary()] },
@@ -29,32 +59,48 @@ describe("quick log", () => {
       startTrip: tripView(),
     });
 
-    const input = await screen.findByLabelText("Where are you going?");
-    // The most recent trip becomes a one-tap suggestion.
-    expect(await screen.findByRole("button", { name: "college for a lab" })).toBeTruthy();
-
-    fireEvent.change(input, { target: { value: "college for a lab" } });
-    fireEvent.click(screen.getByRole("button", { name: "What should I take?" }));
+    // A past trip is offered as a suggestion, replacing the canned examples.
+    fireEvent.click(await screen.findByRole("button", { name: "college for a lab" }));
 
     await waitFor(() => {
       const post = calls.find((call) => call.method === "POST" && call.url === "/api/trips");
-      expect(post).toBeTruthy();
       expect(post?.body).toMatchObject({ rawInput: "college for a lab", withWeather: true });
     });
+
+    // Wait for the trip *view*, not just the request. Starting a trip mounts a
+    // screen that fetches its own suggestions, and ending the test on the POST
+    // leaves that request in flight past teardown.
+    await expectTripView(calls);
+  });
+
+  it("falls back to example trips when there is no history to suggest", async () => {
+    renderApp({ diagnostics: diagnostics(), trips: { trips: [] } });
+
+    expect(await screen.findByRole("button", { name: "I'm going to a hackathon" })).toBeTruthy();
+  });
+
+  it("starts a trip with the typed text", async () => {
+    const { calls } = renderApp({
+      diagnostics: diagnostics(),
+      trips: { trips: [] },
+      learning: learning(),
+      startTrip: tripView(),
+    });
+
+    await startTypedTrip("college for a lab");
+
+    await waitFor(() => {
+      const post = calls.find((call) => call.method === "POST" && call.url === "/api/trips");
+      expect(post?.body).toMatchObject({ rawInput: "college for a lab" });
+    });
+    await expectTripView(calls);
   });
 
   it("shows the server's own error message rather than a generic failure", async () => {
-    renderApp({
-      diagnostics: diagnostics(),
-      trips: { trips: [] },
-      failWith: "I couldn't work out where that is.",
-    });
+    renderApp({ diagnostics: diagnostics(), trips: { trips: [] }, failWith: "I couldn't work out where that is." });
 
-    const input = await screen.findByLabelText("Where are you going?");
-    fireEvent.change(input, { target: { value: "college for a lab" } });
-    fireEvent.click(screen.getByRole("button", { name: "What should I take?" }));
+    await startTypedTrip();
 
-    // The server writes its errors for humans; the UI passes them through.
     expect(await screen.findByText("I couldn't work out where that is.")).toBeTruthy();
   });
 
@@ -63,13 +109,27 @@ describe("quick log", () => {
 
     const input = await screen.findByLabelText("Where are you going?");
     fireEvent.change(input, { target: { value: "   " } });
-    const submit = screen.getByRole<HTMLButtonElement>("button", { name: "What should I take?" });
+    const submit = screen.getByRole<HTMLButtonElement>("button", { name: "Work out what to take" });
     expect(submit.disabled).toBe(true);
+  });
+
+  it("offers to load example history when there is nothing to learn from", async () => {
+    const { calls } = renderApp({
+      diagnostics: diagnostics({ canLoadExample: true }),
+      trips: { trips: [] },
+      learning: { trips: 0, decided: 0, confirmed: 0, confirmRate: 0, groups: [], unknownItems: [] },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Load example history" }));
+
+    await waitFor(() => {
+      expect(calls.some((call) => call.method === "POST" && call.url === "/api/demo")).toBe(true);
+    });
   });
 });
 
 describe("trip view", () => {
-  it("separates the alert worth interrupting for, and never prints 100%", async () => {
+  it("warns about the item you usually forget without printing 100%", async () => {
     renderApp({
       diagnostics: diagnostics(),
       trips: { trips: [tripSummary()] },
@@ -77,63 +137,155 @@ describe("trip view", () => {
       startTrip: tripView(),
     });
 
-    const input = await screen.findByLabelText("Where are you going?");
-    fireEvent.change(input, { target: { value: "college for a lab" } });
-    fireEvent.click(screen.getByRole("button", { name: "What should I take?" }));
+    await startTypedTrip();
 
-    expect(await screen.findByText("⚠️ Before you leave")).toBeTruthy();
-    // 0.999 arriving from the server must render as 99%. The alerted item shows
-    // twice (its own card and the full list), hence the *AllBy* queries.
-    expect((await screen.findAllByText("99%")).length).toBeGreaterThan(0);
+    // The alert is now a marked row rather than a duplicated second list.
+    expect(await screen.findByText(/You usually take this/)).toBeTruthy();
+    expect(screen.getAllByText("99%").length).toBeGreaterThan(0);
     expect(screen.queryByText("100%")).toBeNull();
-    expect(screen.getAllByText("97%").length).toBeGreaterThan(0);
+    expect(screen.getByText("97%")).toBeTruthy();
+    expect(screen.getByText("2 things I'd take — tap the ones you have")).toBeTruthy();
   });
 
-  it("reveals the reason and its evidence when asked why", async () => {
+  it("reveals the reason and its evidence behind the percentage", async () => {
     renderApp({
       diagnostics: diagnostics(),
       trips: { trips: [] },
       learning: learning(),
-      startTrip: tripView({ items: [itemView()], alerts: [itemView()] }),
+      startTrip: tripView(),
     });
 
-    fireEvent.change(await screen.findByLabelText("Where are you going?"), {
-      target: { value: "college for a lab" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "What should I take?" }));
-
-    fireEvent.click((await screen.findAllByRole("button", { name: "Why?" }))[0] as HTMLElement);
+    await startTypedTrip();
+    fireEvent.click(await screen.findByRole("button", { name: "Why 97% likely?" }));
 
     expect(
       await screen.findByText("You confirmed your charger on 14 of your last 16 college lab trips."),
     ).toBeTruthy();
-    expect(screen.getByText(/Evidence: 14 of 16 logged trips/)).toBeTruthy();
+    expect(screen.getByText(/14 of 16 logged trips/)).toBeTruthy();
     expect(screen.getByText(/Usually alongside your laptop/)).toBeTruthy();
   });
 
   it("records a decision by calling feedback with the item and action", async () => {
+    const packedView = tripView({
+      items: [itemView({ userAction: "packed", confirmationSource: "confirmed" }), tripView().items[1]!],
+    });
     const { calls } = renderApp({
       diagnostics: diagnostics(),
       trips: { trips: [] },
       learning: learning(),
       startTrip: tripView(),
-      feedback: tripView({
-        items: [itemView({ userAction: "packed", confirmationSource: "confirmed" })],
-        alerts: [],
-      }),
+      feedback: packedView,
     });
 
-    fireEvent.change(await screen.findByLabelText("Where are you going?"), {
-      target: { value: "college for a lab" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "What should I take?" }));
-    fireEvent.click((await screen.findAllByRole("button", { name: "Packed" }))[0] as HTMLElement);
+    await startTypedTrip();
+    fireEvent.click(await screen.findByRole("button", { name: "Mark Charger as packed" }));
 
     await waitFor(() => {
       const call = calls.find((entry) => entry.url.includes("/feedback"));
       expect(call?.body).toMatchObject({ itemId: "charger", action: "packed" });
     });
-    expect(await screen.findByText("✓ Packed")).toBeTruthy();
+    // The row reflects it, and the progress line counts it.
+    expect((await screen.findByRole("button", { name: "Unpack Charger" })).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    expect(screen.getByText("1 of 2 checked")).toBeTruthy();
+  });
+
+  it("marks an item not needed without asking a follow-up question", async () => {
+    const { calls } = renderApp({
+      diagnostics: diagnostics(),
+      trips: { trips: [] },
+      learning: learning(),
+      startTrip: tripView(),
+      feedback: tripView({ items: [itemView({ userAction: "not_needed" }), tripView().items[1]!] }),
+    });
+
+    await startTypedTrip();
+    fireEvent.click(await screen.findByRole("button", { name: "I don't need my Charger today" }));
+
+    await waitFor(() => {
+      const call = calls.find((entry) => entry.url.includes("/feedback"));
+      expect(call?.body).toMatchObject({ itemId: "charger", action: "not_needed" });
+    });
+  });
+
+  it("adds a new item and marks it packed in the same gesture", async () => {
+    const { calls } = renderApp({
+      diagnostics: diagnostics(),
+      trips: { trips: [] },
+      learning: learning(),
+      startTrip: tripView(),
+      createdItem: {
+        item: { id: "retainer", name: "Retainer", category: "misc", emoji: "📦", custom: true },
+        created: true,
+      },
+      feedback: tripView(),
+    });
+
+    await startTypedTrip();
+    fireEvent.click(await screen.findByRole("button", { name: /Add something else/ }));
+    fireEvent.change(await screen.findByLabelText("Name of the item you're taking"), {
+      target: { value: "Retainer" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+    await waitFor(() => {
+      const created = calls.find((call) => call.method === "POST" && call.url === "/api/items");
+      expect(created?.body).toMatchObject({ name: "Retainer" });
+      const packed = calls.find((entry) => entry.url.includes("/feedback"));
+      expect(packed?.body).toMatchObject({ itemId: "retainer", action: "packed" });
+    });
+  });
+
+  it("offers proposed items in words, with no percentage to mistake for a prediction", async () => {
+    const { calls } = renderApp({
+      diagnostics: diagnostics(),
+      trips: { trips: [] },
+      learning: learning(),
+      startTrip: tripView(),
+      suggestions: { suggestions: [suggestion()], source: "groq" },
+      createdItem: {
+        item: { id: "lab-coat", name: "Lab coat", category: "clothing", emoji: "👕", custom: true },
+        created: true,
+      },
+      feedback: tripView(),
+    });
+
+    await startTypedTrip();
+
+    expect(await screen.findByText("Also worth considering")).toBeTruthy();
+    expect(screen.getByText("proposed by AI")).toBeTruthy();
+    // Jev's rubric as a word, never as a number that looks like a probability.
+    expect(screen.getByText("usually taken")).toBeTruthy();
+    expect(screen.queryByText("91%")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Lab coat and mark it packed" }));
+
+    await waitFor(() => {
+      const created = calls.find((call) => call.method === "POST" && call.url === "/api/items");
+      expect(created?.body).toMatchObject({ name: "Lab coat" });
+      const packed = calls.find((entry) => entry.url.includes("/feedback"));
+      expect(packed?.body).toMatchObject({ itemId: "lab-coat", action: "packed" });
+    });
+    // Once adopted it leaves the suggestion list rather than lingering as a duplicate.
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Add Lab coat and mark it packed" })).toBeNull();
+    });
+  });
+
+  it("says where a rule-based list came from instead of claiming AI wrote it", async () => {
+    renderApp({
+      diagnostics: diagnostics(),
+      trips: { trips: [] },
+      learning: learning(),
+      startTrip: tripView(),
+      suggestions: { suggestions: [suggestion({ source: "heuristic", plausibility: undefined })], source: "heuristic" },
+    });
+
+    await startTypedTrip();
+
+    expect(await screen.findByText("common for this kind of trip")).toBeTruthy();
+    expect(screen.getByText("suggested")).toBeTruthy();
   });
 
   it("explains when a correction could not be understood", async () => {
@@ -145,15 +297,12 @@ describe("trip view", () => {
       interpret: { parsed: null, view: tripView() },
     });
 
-    fireEvent.change(await screen.findByLabelText("Where are you going?"), {
-      target: { value: "college for a lab" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "What should I take?" }));
-
+    await startTypedTrip();
+    fireEvent.click(await screen.findByRole("button", { name: /Words are easier/ }));
     fireEvent.change(await screen.findByLabelText("Tell me what changed"), {
       target: { value: "the weather looks nice" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Record it" }));
+    fireEvent.click(screen.getByRole("button", { name: "Record" }));
 
     expect(await screen.findByText(/couldn't tell which item/)).toBeTruthy();
   });
@@ -170,12 +319,33 @@ describe("learned tab", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Learned/ }));
 
-    // "college lab" is both the group heading and the exception's context label.
     expect((await screen.findAllByText("college lab")).length).toBeGreaterThan(0);
-    expect(screen.getByText("14 of 16 trips")).toBeTruthy();
+    expect(screen.getByText("14 of 16")).toBeTruthy();
     // Items outside the closed catalog are disclosed rather than hidden.
     expect(screen.getByText(/projector-remote/)).toBeTruthy();
     // Exceptions are listed with their scope in plain words.
-    expect(screen.getByText("just that day")).toBeTruthy();
+    expect(screen.getByText(/just that day/)).toBeTruthy();
+    // ...and resolved through the full item list, not just the built-in catalog.
+    expect(screen.getByText(/Laptop/)).toBeTruthy();
+  });
+});
+
+describe("history tab", () => {
+  it("reopens a past trip and shows what it predicted at the time", async () => {
+    const mock = renderApp({
+      diagnostics: diagnostics(),
+      trips: { trips: [tripSummary()] },
+      learning: learning(),
+      getTrip: tripView(),
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: /History/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /college for a lab/ }));
+
+    await waitFor(() => {
+      expect(mock.calls.some((call) => call.url === "/api/trips/trip-1")).toBe(true);
+    });
+    const detail = await screen.findByText(/Predicted at/);
+    expect(within(detail.closest(".trip-detail") as HTMLElement).getByText("Charger")).toBeTruthy();
   });
 });

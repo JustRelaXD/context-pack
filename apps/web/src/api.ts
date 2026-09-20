@@ -1,10 +1,14 @@
 import type {
   CatalogResponse,
+  CreateItemRequest,
+  CreateItemResponse,
+  DemoDataResponse,
   DiagnosticsResponse,
   ExceptionsResponse,
   HistoryResponse,
   InterpretExceptionResponse,
   LearningOverview,
+  SuggestionsResponse,
   TripView,
   UserAction,
 } from "@contextpack/shared";
@@ -41,7 +45,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   const text = await response.text();
-  const body = text ? (JSON.parse(text) as unknown) : null;
+  let body: unknown = null;
+  if (text) {
+    try {
+      body = JSON.parse(text) as unknown;
+    } catch {
+      // A non-JSON body means something answered that is not this API — a proxy
+      // error page, or the wrong port. Saying that is more useful than a parse
+      // error, which is what the user would otherwise see.
+      throw new ApiError(
+        `The server sent a response this app can't read (${response.status}).`,
+        response.status,
+      );
+    }
+  }
 
   if (!response.ok) {
     const message =
@@ -57,6 +74,12 @@ export const api = {
   diagnostics: () => request<DiagnosticsResponse>("/api/diagnostics"),
 
   catalog: () => request<CatalogResponse>("/api/catalog"),
+
+  /** The catalog plus this user's own items. */
+  items: () => request<CatalogResponse>("/api/items"),
+
+  createItem: (input: CreateItemRequest) =>
+    request<CreateItemResponse>("/api/items", { method: "POST", body: JSON.stringify(input) }),
 
   startTrip: (rawInput: string, withWeather: boolean) =>
     request<TripView>("/api/trips", {
@@ -80,10 +103,20 @@ export const api = {
       body: JSON.stringify({ rawInput }),
     }),
 
+  /** Candidate items the agent proposes for this trip. Separate: it is slower. */
+  tripSuggestions: (tripId: string) =>
+    request<SuggestionsResponse>(`/api/trips/${tripId}/suggestions`),
+
   learning: () => request<LearningOverview>("/api/learning"),
 
   exceptions: () => request<ExceptionsResponse>("/api/exceptions"),
 
   forgetException: (exceptionId: string) =>
     request<{ ok: boolean }>(`/api/exceptions/${exceptionId}`, { method: "DELETE" }),
+
+  /** Generate the example history. Refused by the server once you have your own. */
+  loadExample: () => request<DemoDataResponse>("/api/demo", { method: "POST" }),
+
+  /** Wipe everything. Only available when the server was started to allow it. */
+  reset: () => request<{ ok: boolean }>("/api/reset", { method: "POST" }),
 };

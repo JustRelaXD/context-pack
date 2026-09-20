@@ -59,6 +59,58 @@ export interface Item {
   name: string;
   category: ItemCategory;
   emoji: string;
+  /**
+   * True when the user added this themselves.
+   *
+   * The shared catalog stays closed so the agent cannot invent items, but a real
+   * person carries things we did not think of — a projector remote, a retainer.
+   * Those live alongside the catalog as user items, which keeps the guarantee
+   * (nothing appears that a person did not name) without capping the product at
+   * twenty objects.
+   */
+  custom?: boolean;
+}
+
+/** Fallback emoji per category, so a generated or added item is never a blank row. */
+export const DEFAULT_ITEM_EMOJI: Record<ItemCategory, string> = {
+  tech: "🔌",
+  identity: "🪪",
+  stationery: "📝",
+  clothing: "👕",
+  food: "🍫",
+  sports: "🏸",
+  misc: "📦",
+};
+
+export const ITEM_CATEGORIES: readonly ItemCategory[] = [
+  "tech",
+  "identity",
+  "stationery",
+  "clothing",
+  "food",
+  "sports",
+  "misc",
+];
+
+/**
+ * A candidate item for an outing, proposed rather than predicted.
+ *
+ * This is the bootstrap for a context we have no history in. It carries no
+ * probability and never will: a generated item has no observations behind it, so
+ * a percentage would be a made-up number wearing the same clothes as a real one.
+ * `plausibility` is the agent's judgement of the item for this outing, which is a
+ * different claim, and it is labelled as such in the UI.
+ */
+export interface ItemSuggestion {
+  /** What the item would be called if the user keeps it. */
+  id: string;
+  name: string;
+  emoji: string;
+  category: ItemCategory;
+  /** 0…1 from Jev's rubric. Absent when nothing scored it. */
+  plausibility?: number;
+  /** Which layer proposed it, so the UI can say where the list came from. */
+  source: "groq" | "heuristic";
 }
 
 export type WeatherCondition = "clear" | "rain" | "snow" | "hot" | "cold";

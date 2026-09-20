@@ -1,13 +1,20 @@
-import { heuristicContextExtractor, heuristicExceptionParser, heuristicReasonPhraser } from "./heuristic";
+import {
+  heuristicContextExtractor,
+  heuristicExceptionParser,
+  heuristicItemSuggester,
+  heuristicReasonPhraser,
+} from "./heuristic";
 import { createGroqReasonPhraser } from "./groq";
 import { createJevClient, createJevContextExtractor, createJevExceptionParser } from "./jev";
-import type { AgentSource, ContextExtractor, ExceptionParser, ReasonPhraser } from "./types";
+import { createItemSuggester } from "./suggest";
+import type { AgentSource, ContextExtractor, ExceptionParser, ItemSuggester, ReasonPhraser } from "./types";
 
 export * from "./types";
 export { TAG_VOCABULARY, KNOWN_PURPOSES, inferTags } from "./tags";
-export { heuristicExtractContext, heuristicParseException, findMentionedItem } from "./heuristic";
+export { heuristicExtractContext, heuristicParseException, heuristicSuggestItems, findMentionedItem } from "./heuristic";
 export { createGroqReasonPhraser } from "./groq";
-export { createJevClient, createJevContextExtractor, createJevExceptionParser } from "./jev";
+export { createJevClient, createJevContextExtractor, createJevExceptionParser, readScore } from "./jev";
+export { createItemSuggester, parseCandidates, cleanName } from "./suggest";
 
 export interface AgentEnv {
   TYPESAFE_API_KEY?: string | undefined;
@@ -22,7 +29,7 @@ export interface AgentEnv {
 }
 
 export interface AgentDiagnostic {
-  component: "context" | "exceptions" | "reasoning";
+  component: "context" | "exceptions" | "reasoning" | "suggestions";
   active: AgentSource;
   detail: string;
 }
@@ -31,6 +38,7 @@ export interface AgentLayer {
   contextExtractor: ContextExtractor;
   exceptionParser: ExceptionParser;
   reasonPhraser: ReasonPhraser;
+  itemSuggester: ItemSuggester;
   diagnostics(): AgentDiagnostic[];
 }
 
@@ -41,6 +49,11 @@ export interface AgentLayer {
  * key, an expired credit, or a rate limit degrades quality rather than breaking
  * the app. Running with `CONTEXTPACK_AGENT=heuristic` produces a fully offline,
  * fully deterministic build — which is also what the test suite uses.
+ *
+ * "Fully offline" means *all three* components, reasoning included. It would be
+ * easy to read the flag as "skip Jev" and leave Groq phrasing switched on, but
+ * then a build advertised as offline would still make a network call per alert —
+ * which is how generating example history took 23 seconds instead of two.
  */
 export function createAgentLayer(env: AgentEnv = process.env): AgentLayer {
   const forceHeuristic = env.CONTEXTPACK_AGENT?.trim().toLowerCase() === "heuristic";
@@ -63,18 +76,32 @@ export function createAgentLayer(env: AgentEnv = process.env): AgentLayer {
     ? createJevExceptionParser(jevClient)
     : heuristicExceptionParser;
 
-  const groqPhraser = groqKey
-    ? createGroqReasonPhraser({
-        apiKey: groqKey,
-        model: env.GROQ_MODEL?.trim() || undefined,
-      })
-    : undefined;
+  const groqPhraser =
+    groqKey && !forceHeuristic
+      ? createGroqReasonPhraser({
+          apiKey: groqKey,
+          model: env.GROQ_MODEL?.trim() || undefined,
+        })
+      : undefined;
   const reasonPhraser: ReasonPhraser = groqPhraser ?? heuristicReasonPhraser;
+
+  // Proposals come from Groq (it can write strings; Jev cannot) and are ranked by
+  // Jev (it can judge; a chat model would just agree with itself). Either half
+  // missing leaves a working path: generation falls back to the rules, scoring is
+  // simply skipped, and the UI drops the ranking line rather than inventing one.
+  const itemSuggester: ItemSuggester =
+    groqKey && !forceHeuristic
+      ? createItemSuggester({
+          groq: { apiKey: groqKey, model: env.GROQ_MODEL?.trim() || undefined },
+          jevClient,
+        })
+      : heuristicItemSuggester;
 
   return {
     contextExtractor,
     exceptionParser,
     reasonPhraser,
+    itemSuggester,
     diagnostics() {
       return [
         {
@@ -96,7 +123,21 @@ export function createAgentLayer(env: AgentEnv = process.env): AgentLayer {
           active: reasonPhraser.name,
           detail: groqPhraser
             ? "Groq rewrites the engine's sentence, numbers validated"
-            : "Templated sentences from real evidence only",
+            : forceHeuristic
+              ? "Forced offline by CONTEXTPACK_AGENT=heuristic"
+              : "No GROQ_API_KEY set; templated sentences from real evidence only",
+        },
+        {
+          component: "suggestions",
+          active: itemSuggester.name,
+          detail:
+            itemSuggester.name === "groq"
+              ? jevClient
+                ? "Groq proposes items, Jev scores how plausible each is"
+                : "Groq proposes items; no TYPESAFE_API_KEY, so nothing scores them"
+              : forceHeuristic
+                ? "Forced offline by CONTEXTPACK_AGENT=heuristic"
+                : "No GROQ_API_KEY set; common items by kind of outing",
         },
       ];
     },

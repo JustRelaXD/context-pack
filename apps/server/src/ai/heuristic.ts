@@ -1,12 +1,15 @@
-import { normalizeToken, type Item } from "@contextpack/shared";
+import { CATALOG_BY_ID, normalizeToken, type Item } from "@contextpack/shared";
 import { inferTags, KNOWN_PURPOSES } from "./tags";
 import type {
   ContextExtractor,
   ExceptionParser,
   ExtractedContext,
+  ItemSuggester,
   KnownContexts,
   ParsedException,
   ReasonPhraser,
+  SuggestedItem,
+  SuggestionRequest,
 } from "./types";
 
 /**
@@ -155,6 +158,100 @@ export const heuristicExceptionParser: ExceptionParser = {
   available: true,
   async parse(rawInput, candidates) {
     return heuristicParseException(rawInput, candidates);
+  },
+};
+
+/**
+ * What people tend to take, by kind of outing.
+ *
+ * Only catalog ids appear here, so this can only ever reorder things the app
+ * already knew about — it cannot invent a "lab coat". That is the trade: with no
+ * key you get a useful starting list, not a tailored one. Ordering within a rule
+ * is most-expected first, which is also the order the UI shows.
+ */
+const SUGGESTION_RULES: readonly { when: RegExp; items: readonly string[] }[] = [
+  {
+    when: /\b(gym|workout|fitness|exercise|training|run|running)\b/,
+    items: ["gym-clothes", "water-bottle", "headphones", "id-card", "snack"],
+  },
+  {
+    when: /\b(lab|laboratory|practical|experiment)\b/,
+    items: ["lab-kit", "notebook", "pen", "usb-drive", "id-card"],
+  },
+  {
+    when: /\b(hackathon|studio|project|build|workshop|demo)\b/,
+    items: ["laptop", "charger", "extension-board", "headphones", "power-bank"],
+  },
+  {
+    when: /\b(exam|test|quiz|viva|paper)\b/,
+    items: ["calculator", "pen", "id-card", "water-bottle"],
+  },
+  {
+    when: /\b(college|university|campus|school|class|lecture|seminar|tuition)\b/,
+    items: ["laptop", "charger", "id-card", "notebook", "pen"],
+  },
+  {
+    when: /\b(office|work|standup|meeting|desk|shift)\b/,
+    items: ["laptop", "charger", "id-card", "notebook"],
+  },
+  {
+    when: /\b(sport|sports|badminton|cricket|football|tennis|match|practice|game)\b/,
+    items: ["sports-kit", "water-bottle", "id-card"],
+  },
+  {
+    when: /\b(travel|trip|airport|station|train|flight|bus|tour)\b/,
+    items: ["id-card", "wallet", "charger", "power-bank"],
+  },
+  {
+    when: /\b(party|dinner|wedding|function|fest|festival|concert|market|shopping|grocery)\b/,
+    items: ["wallet", "keys", "id-card"],
+  },
+  { when: /\b(rain|monsoon|storm|wet)\b/, items: ["umbrella", "jacket"] },
+  { when: /\b(cold|winter|snow|chilly)\b/, items: ["jacket"] },
+];
+
+/** Added at the end when a rule produced almost nothing, to reach a useful length. */
+const GENERIC_ITEMS: readonly string[] = ["id-card", "water-bottle", "charger", "keys", "wallet"];
+
+/**
+ * The offline path for suggestions, used when no key is set or a call failed.
+ *
+ * It answers the same question from a table instead of a model. Worth being clear
+ * about what it is not: it does not know the user, so it is the same advice for
+ * everyone going to a gym. That is still a better first screen than an empty one,
+ * and the items it proposes are ones the engine can actually predict tomorrow.
+ */
+export function heuristicSuggestItems(request: SuggestionRequest): SuggestedItem[] {
+  const text = [request.destination, request.purpose ?? "", ...request.tags].join(" ").toLowerCase();
+  const excluded = new Set(request.exclude.map((name) => name.trim().toLowerCase()));
+
+  const ordered: string[] = [];
+  const push = (id: string) => {
+    if (ordered.includes(id)) return;
+    const item = CATALOG_BY_ID.get(id);
+    if (!item || excluded.has(item.name.toLowerCase())) return;
+    ordered.push(id);
+  };
+
+  for (const rule of SUGGESTION_RULES) {
+    if (!rule.when.test(text)) continue;
+    for (const id of rule.items) push(id);
+  }
+  // A context nothing matched still deserves a starting list.
+  if (ordered.length < 4) for (const id of GENERIC_ITEMS) push(id);
+
+  return ordered.slice(0, Math.max(0, request.limit)).flatMap((id) => {
+    const item = CATALOG_BY_ID.get(id);
+    if (!item) return [];
+    return [{ name: item.name, category: item.category, emoji: item.emoji, source: "heuristic" as const }];
+  });
+}
+
+export const heuristicItemSuggester: ItemSuggester = {
+  name: "heuristic",
+  available: true,
+  async suggest(request) {
+    return heuristicSuggestItems(request);
   },
 };
 

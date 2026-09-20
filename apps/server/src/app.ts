@@ -2,10 +2,16 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
-import { CATALOG } from "@contextpack/shared";
+import {
+  CATALOG,
+  type CreateItemResponse,
+  type DemoDataResponse,
+  type ItemCategory,
+} from "@contextpack/shared";
 import type { Service } from "./service";
 import { DEFAULT_USER_ID } from "./service";
-import { describeStore, findRepoRoot, type Store } from "./store";
+import { createOfflineService, generateDemoHistory } from "./demo";
+import { describeStore, findRepoRoot, type JsonStore, type Store } from "./store";
 
 /**
  * The HTTP surface.
@@ -52,26 +58,111 @@ export function createApp(options: AppOptions) {
     res.json({ items: CATALOG });
   });
 
+  /** The catalog plus the user's own items — everything the picker offers. */
+  app.get(
+    "/api/items",
+    asyncRoute(async (req, res) => {
+      res.json({ items: await service.listItems(userIdOf(req)) });
+    }),
+  );
+
+  /**
+   * Add an item of your own.
+   *
+   * Answers 201 when a new item was created and 200 when the name matched one
+   * that already existed, so the client can say "added" or "you already have
+   * that" without a second round trip.
+   */
+  app.post(
+    "/api/items",
+    asyncRoute(async (req, res) => {
+      const body = (req.body ?? {}) as { name?: string; emoji?: string; category?: string };
+      if (typeof body.name !== "string" || !body.name.trim()) {
+        res.status(400).json({ error: "name is required." });
+        return;
+      }
+      const result = await service.createItem({
+        userId: userIdOf(req),
+        name: body.name,
+        ...(typeof body.emoji === "string" ? { emoji: body.emoji } : {}),
+        ...(typeof body.category === "string" && isItemCategory(body.category)
+          ? { category: body.category }
+          : {}),
+      });
+      const payload: CreateItemResponse = result;
+      res.status(result.created ? 201 : 200).json(payload);
+    }),
+  );
+
   /**
    * Which layer is answering, and whether each key is present.
    *
    * Reports presence, never values: this endpoint is the one a judge or a
    * screen recording is most likely to open.
    */
-  app.get("/api/diagnostics", (_req, res) => {
-    const diagnostics = service.diagnostics();
-    res.json({
-      store: describeStore(store),
-      weather: diagnostics.weather,
-      agent: diagnostics.agent,
-      keys: {
-        TYPESAFE_API_KEY: Boolean(process.env.TYPESAFE_API_KEY?.trim()),
-        TYPESAFE_BASE_URL: process.env.TYPESAFE_BASE_URL?.trim() || "https://api.typesafe.ai",
-        GROQ_API_KEY: Boolean((process.env.GROQ_API_KEY ?? process.env.GROK_API_KEY)?.trim()),
-        GROQ_MODEL: process.env.GROQ_MODEL?.trim() || "openai/gpt-oss-20b",
-      },
-    });
-  });
+  app.get(
+    "/api/diagnostics",
+    asyncRoute(async (req, res) => {
+      const diagnostics = service.diagnostics();
+      // "Can I load the example history?" is decided by whether this user has
+      // ever decided anything. Asking here means the UI never has to guess and
+      // never shows an action that would be refused.
+      const learning = await service.learning(userIdOf(req));
+      res.json({
+        store: describeStore(store),
+        weather: diagnostics.weather,
+        agent: diagnostics.agent,
+        keys: {
+          TYPESAFE_API_KEY: Boolean(process.env.TYPESAFE_API_KEY?.trim()),
+          TYPESAFE_BASE_URL: process.env.TYPESAFE_BASE_URL?.trim() || "https://api.typesafe.ai",
+          GROQ_API_KEY: Boolean((process.env.GROQ_API_KEY ?? process.env.GROK_API_KEY)?.trim()),
+          GROQ_MODEL: process.env.GROQ_MODEL?.trim() || "openai/gpt-oss-20b",
+        },
+        resetEnabled: process.env.CONTEXTPACK_ALLOW_RESET === "1",
+        canLoadExample: learning.decided === 0,
+      });
+    }),
+  );
+
+  /**
+   * Load the example history.
+   *
+   * This is the answer to "the app is empty and I have nothing to demo". It is
+   * refused once the user has decided anything themselves, because mixing a
+   * fabricated history into their own would make every count in the app a
+   * mixture of truth and fiction.
+   *
+   * The generator runs through an *offline* service — rule-based parsing, no
+   * model calls, explicit weather — so it is a couple of seconds of pure CPU
+   * rather than a hundred network round trips, and it produces the same result
+   * every time. It shares this app's store, so the data lands where the routes
+   * will read it.
+   */
+  app.post(
+    "/api/demo",
+    asyncRoute(async (req, res) => {
+      const userId = userIdOf(req);
+      const existing = await service.learning(userId);
+      if (existing.decided > 0) {
+        res.status(409).json({
+          error: "You already have history of your own, so I won't mix example data into it.",
+        });
+        return;
+      }
+
+      const offline = createOfflineService(store, `demo-${Date.now().toString(36)}`);
+      const result = await generateDemoHistory({ service: offline, userId });
+
+      const json = store as Partial<JsonStore>;
+      if (typeof json.flush === "function") await json.flush();
+
+      const payload: DemoDataResponse = {
+        created: { trips: result.trips, decisions: result.decisions },
+        contextGroups: result.contextGroups,
+      };
+      res.status(201).json(payload);
+    }),
+  );
 
   app.post(
     "/api/trips",
@@ -115,6 +206,20 @@ export function createApp(options: AppOptions) {
         return;
       }
       res.json(view);
+    }),
+  );
+
+  /**
+   * Candidate items the agent proposes for this trip.
+   *
+   * Scoped to the trip rather than to a query string on purpose: the context that
+   * was actually stored is the one that should be reasoned about, and a client
+   * that passed its own destination could drift from what the trip says.
+   */
+  app.get(
+    "/api/trips/:id/suggestions",
+    asyncRoute(async (req, res) => {
+      res.json(await service.suggestItems({ userId: userIdOf(req), tripId: req.params.id ?? "" }));
     }),
   );
 
@@ -224,9 +329,46 @@ export function createApp(options: AppOptions) {
   }
 
   app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
-    const status = /Unknown trip|not in the item catalog|Tell me where/.test(error.message) ? 400 : 500;
-    res.status(status).json({ error: error.message });
+    res.status(statusFor(error)).json({ error: error.message });
   });
 
   return app;
+}
+
+/**
+ * Which failures are the caller's fault.
+ *
+ * The service throws plain `Error`s, and most of them are things the user did
+ * (a one-letter item name, a trip that doesn't exist) rather than a server fault.
+ * Answering 500 to those is not just wrong for monitoring: the UI shows the
+ * message either way, so the only effect of the wrong status is a red herring for
+ * whoever is debugging the app.
+ */
+const CLIENT_ERROR = new RegExp(
+  [
+    "Tell me where",
+    "Unknown trip",
+    "not in the item catalog",
+    "Give the item a name",
+    "That name is too long",
+    "itemId and action",
+  ].join("|"),
+);
+
+function statusFor(error: Error): number {
+  return CLIENT_ERROR.test(error.message) ? 400 : 500;
+}
+
+const ITEM_CATEGORIES: ItemCategory[] = [
+  "tech",
+  "identity",
+  "stationery",
+  "clothing",
+  "food",
+  "sports",
+  "misc",
+];
+
+function isItemCategory(value: string): value is ItemCategory {
+  return (ITEM_CATEGORIES as string[]).includes(value);
 }
