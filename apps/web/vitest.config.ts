@@ -1,16 +1,17 @@
-import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
 /**
  * Test configuration, kept separate from `vite.config.ts` so the production
  * build never has to resolve the test toolchain.
  *
- * The React plugin is repeated here on purpose: tests render `.tsx`, so the JSX
- * transform needs to be present in this config too, and sharing it would mean
- * reintroducing the coupling this file exists to remove.
+ * There is no React plugin here, on purpose. `jsx: react-jsx` in tsconfig means
+ * esbuild compiles the JSX, which is exactly what `vite build` does, so the
+ * tests exercise the same transform that ships. The plugin only adds React Fast
+ * Refresh, which is a dev-server feature and has no meaning under test — and
+ * loading it here previously made the tests depend on a package the build can
+ * do without.
  */
 export default defineConfig({
-  plugins: [react()],
   test: {
     // happy-dom rather than jsdom: same job, noticeably less setup, and the UI
     // tests only need a DOM and a fetch stub.

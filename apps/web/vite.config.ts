@@ -1,4 +1,3 @@
-import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 /**
@@ -7,14 +6,22 @@ import { defineConfig } from "vite";
  * and the production build can be served straight from the API process (see
  * `serveWeb` in the server) with the exact same relative URLs.
  *
+ * The React plugin is loaded by the dev server only, and dynamically, so that
+ * `vite build` never resolves it. Fast Refresh is a dev-server feature; the
+ * build does not need it, because `jsx: react-jsx` in tsconfig means esbuild —
+ * which ships with Vite — compiles the JSX. This is not a micro-optimisation:
+ * the production build runs in a container we do not control, and it failed
+ * there with "Cannot find package '@vitejs/plugin-react'" when the platform's
+ * install produced a partial dev tree. A build that cannot start without a dev
+ * package it does not use is a build with a dependency that isn't real.
+ *
  * Test configuration deliberately lives in `vitest.config.ts` instead of here.
  * Importing `vitest/config` from this file made the *production* build load the
- * entire test toolchain — a dependency the deploy does not need, on the one step
- * that has to work in a build container. Vite's build config should depend on
- * Vite and nothing else.
+ * entire test toolchain — the same mistake, one step earlier. The build config
+ * should depend on Vite and nothing else.
  */
-export default defineConfig({
-  plugins: [react()],
+export default defineConfig(async ({ command }) => ({
+  plugins: command === "serve" ? [(await import("@vitejs/plugin-react")).default()] : [],
   server: {
     port: 5173,
     proxy: {
@@ -28,4 +35,4 @@ export default defineConfig({
     outDir: "dist",
     sourcemap: true,
   },
-});
+}));

@@ -242,12 +242,24 @@ serverless invocation.
 `app.listen()` and exports nothing, which is what produces
 `FUNCTION_INVOCATION_FAILED` on every path, including `/api/health`.
 
-One non-obvious build detail: **`installCommand` must include `--include=dev`.** Vercel sets
-`NODE_ENV=production` for the build, and npm treats that as "omit devDependencies" — so a plain
-`npm install` installs no build tooling at all and the build dies with `sh: 1: vite: not found`.
-Locally this never shows up, because your shell has no `NODE_ENV` set. The failure was reproduced
-and the fix verified by running the exact install and build commands from `vercel.json` against a
-fresh checkout in a production environment.
+Two non-obvious build details, both of which failed in that container before they were understood.
+
+**`installCommand` must include `--include=dev`, and it uses `npm ci` rather than `npm install`.**
+Vercel sets `NODE_ENV=production` for the build, and npm treats that as "omit devDependencies" — so a
+plain `npm install` installs no build tooling at all and the build dies with `sh: 1: vite: not
+found`. Locally this never shows up, because your shell has no `NODE_ENV` set. `npm ci` adds a second
+property we need: node_modules is built from the lockfile exactly, so the installed tree cannot come
+out *partial*. It did once — a build arrived where `vite` resolved but `@vitejs/plugin-react` did
+not, which is not a tree any single install command predicts, and `npm ci` is the install whose
+result is decided by the lockfile instead of by ambient config.
+
+**The build does not use `@vitejs/plugin-react`, and must not depend on it.** That is what failed
+next, with `Cannot find package '@vitejs/plugin-react'` while loading `vite.config.ts`. The plugin
+provides React Fast Refresh, which is a dev-server feature; `jsx: react-jsx` in tsconfig means
+esbuild — bundled with Vite — already compiles the JSX. So `vite.config.ts` imports it only when
+serving, and the tests deliberately drop it too, which means they exercise the same transform that
+ships. Verified by deleting the plugin from an installed tree and building: the build succeeds and
+emits a byte-identical bundle, so this removes a dependency rather than changing the output.
 
 Two consequences of running serverless, both stated rather than hidden:
 

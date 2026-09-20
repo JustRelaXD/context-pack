@@ -24,30 +24,45 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+let lastCalls: Array<{ method: string; url: string; body?: unknown }> = [];
+
 function renderApp(options: Parameters<typeof installMockFetch>[0]) {
   const mock = installMockFetch(options);
+  lastCalls = mock.calls;
   render(<App />);
   return mock;
 }
 
 /**
- * Wait until the trip screen has rendered *and* its follow-up request has been
- * issued. Starting a trip mounts a screen that fetches its own suggestions, and
- * ending the test on the POST alone leaves that request in flight past teardown —
- * where it hits the real network instead of the mock.
+ * Wait until the trip screen has settled: mounted, and past the request it makes
+ * on mount.
+ *
+ * This exists because of a real leak. Starting a trip mounts a screen that
+ * immediately fetches its own suggestions, and a test that ends as soon as the
+ * POST is recorded leaves that request scheduled past teardown — where it runs
+ * with the mock already removed and reaches the network. Awaiting the request is
+ * also what flushes React's pending effects, so this is the test saying the same
+ * thing the app means by "the screen is ready".
  */
-async function expectTripView(calls: Array<{ url: string }>) {
-  expect(await screen.findByText(/tap the ones you have/)).toBeTruthy();
+async function settleTrip() {
   await waitFor(() => {
-    expect(calls.some((call) => call.url.includes("/suggestions"))).toBe(true);
+    expect(lastCalls.some((call) => call.url.includes("/suggestions"))).toBe(true);
   });
 }
 
-/** Start a trip by typing, the way a first-time user would. */
-async function startTypedTrip(text = "college for a lab") {
+/**
+ * Start a trip by typing, the way a first-time user would.
+ *
+ * `settle: false` is for the one test that expects no trip screen at all,
+ * because the server refused to start it.
+ */
+async function startTypedTrip(text = "college for a lab", options: { settle?: boolean } = {}) {
   const input = await screen.findByLabelText("Where are you going?");
   fireEvent.change(input, { target: { value: text } });
   fireEvent.click(screen.getByRole("button", { name: "Work out what to take" }));
+  if (options.settle !== false) {
+    await settleTrip();
+  }
 }
 
 describe("start screen", () => {
@@ -67,10 +82,8 @@ describe("start screen", () => {
       expect(post?.body).toMatchObject({ rawInput: "college for a lab", withWeather: true });
     });
 
-    // Wait for the trip *view*, not just the request. Starting a trip mounts a
-    // screen that fetches its own suggestions, and ending the test on the POST
-    // leaves that request in flight past teardown.
-    await expectTripView(calls);
+    // Wait for the trip *view*, not just the request — see `settleTrip`.
+    await settleTrip();
   });
 
   it("falls back to example trips when there is no history to suggest", async () => {
@@ -93,13 +106,15 @@ describe("start screen", () => {
       const post = calls.find((call) => call.method === "POST" && call.url === "/api/trips");
       expect(post?.body).toMatchObject({ rawInput: "college for a lab" });
     });
-    await expectTripView(calls);
+    await settleTrip();
   });
 
   it("shows the server's own error message rather than a generic failure", async () => {
     renderApp({ diagnostics: diagnostics(), trips: { trips: [] }, failWith: "I couldn't work out where that is." });
 
-    await startTypedTrip();
+    // No trip screen here — the server refused to start one — so there is no
+    // follow-up request to wait for.
+    await startTypedTrip("college for a lab", { settle: false });
 
     expect(await screen.findByText("I couldn't work out where that is.")).toBeTruthy();
   });
