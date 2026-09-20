@@ -178,6 +178,13 @@ Groq model that no longer existed on the account, and an environment variable ex
 typo'd name. It now also reports whether the suggester is really generating (*"6 proposed, 6 scored
 by jev"*) or silently degraded to the rule-based table.
 
+That whole path is verified from a clean checkout of `main` with **every key removed from the
+environment**: `npm ci` → `npm run seed` (2.4 s) → `npm run build` → serve, and then the keyword
+parser reads the context, predictions come back from the seeded history with their real reasons, a
+correction (*"I don't need my laptop today"*) is parsed and the laptop alert stands down, and item
+proposals fall back to the rule-based list. No account, no key, and no network call is required;
+weather is the one optional extra and it degrades to a manual toggle.
+
 ### Tests
 
 ```bash
@@ -230,6 +237,11 @@ corrupt the store. The API contract lives in `shared`, so a server field change 
 rather than silently rendering `undefined`.
 
 ### Deploying to Vercel
+
+Optional. Everything above runs with no account at all — this section is only for the live URL, and
+the one thing a deployment cannot do without durable storage is remember anything. If you are
+submitting the local build, you can skip all of it; if you do deploy, read *Making the deployment
+durable* below first, or the app will look broken when a tap doesn't stick.
 
 The repo ships with `vercel.json` and `scripts/deploy-build.mjs`, so a Git-connected project needs
 three settings from you and nothing else:
@@ -383,5 +395,7 @@ cannot work without durable storage; the rest stay out until something needs the
 - **One user.** No auth, no accounts; anything multi-user needs Cognito and a partition key.
 - **The engine is deliberately not ML.** It's weighted hierarchical smoothing. When it says 91%, it
   means "14 of 15 in this context" — checkable by hand, which matters more here than sophistication.
-- **Weather is rain/snow/temperature only**, and it won't geocode a place name that Open-Meteo
-  doesn't know; when that happens the trip is logged normally without weather.
+- **A deployment without durable storage cannot remember anything.** The `memory` adapter is
+  per-instance, so on a deployed URL a follow-up request can land on an instance that never saw the
+  trip, and a tap is not recorded. The `dynamodb` adapter fixes it (*Making the deployment durable*),
+  and until it is configured the UI says so on screen rather than letting a failed tap read as a bug.

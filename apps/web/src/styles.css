@@ -1101,6 +1101,22 @@ code {
   color: var(--muted);
 }
 
+/*
+ * A quiet disclosure, not an error banner: the app is working, storage simply
+ * cannot keep anything. Muted so it informs without competing with the list the
+ * user is trying to act on.
+ */
+.preview-note {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
 .small {
   font-size: 0.88rem;
 }

@@ -328,6 +328,24 @@ export function App() {
       </header>
 
       <main className="main">
+        {/*
+         * Storage that cannot survive a request makes the app look broken from
+         * the outside: a tap that does not stick reads as a bug, and the honest
+         * reason is invisible unless you open the status sheet. This is the
+         * deployed preview telling the truth up front, and it stays silent
+         * locally, where the store is a real file.
+         */}
+        {diagnostics?.storeError ? (
+          <p className="preview-note" role="status">
+            Storage is unreachable, so nothing can be saved yet: {diagnostics.storeError}
+          </p>
+        ) : diagnostics && !diagnostics.store.durable ? (
+          <p className="preview-note" role="status">
+            This instance keeps nothing between requests, so a tap may not be recorded. Run it locally
+            for the full loop.
+          </p>
+        ) : null}
+
         {tab === "today" ? (
           <Today
             trip={visibleTrip}

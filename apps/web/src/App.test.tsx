@@ -364,3 +364,46 @@ describe("history tab", () => {
     expect(within(detail.closest(".trip-detail") as HTMLElement).getByText("Charger")).toBeTruthy();
   });
 });
+
+describe("storage honesty", () => {
+  // A tap that silently fails looks like a bug in the app. When storage cannot
+  // survive a request — a serverless instance — the screen has to say so, and
+  // when storage is a real file it has to stay quiet.
+  it("warns that a non-durable instance may not record a tap", async () => {
+    renderApp({
+      diagnostics: diagnostics({ store: { adapter: "memory", durable: false } }),
+      trips: { trips: [tripSummary()] },
+    });
+
+    expect(await screen.findByText(/keeps nothing between requests/)).toBeTruthy();
+  });
+
+  it("stays silent when storage is a real file", async () => {
+    renderApp({
+      diagnostics: diagnostics({
+        store: { adapter: "json", durable: true, file: "/tmp/store.json" },
+      }),
+      trips: { trips: [tripSummary()] },
+    });
+
+    // Wait for the screen to be there before asserting an absence, or the test
+    // would pass on a blank render.
+    await screen.findByLabelText("Where are you going?");
+    expect(screen.queryByText(/keeps nothing between requests/)).toBeNull();
+  });
+
+  it("names the error when the store is unreachable, instead of looking empty", async () => {
+    renderApp({
+      diagnostics: diagnostics({
+        store: { adapter: "dynamodb", table: "contextpack", durable: true },
+        storeError: "The security token included in the request is invalid.",
+      }),
+      trips: { trips: [] },
+    });
+
+    expect(await screen.findByText(/Storage is unreachable/)).toBeTruthy();
+    expect(screen.getByText(/security token/i)).toBeTruthy();
+    // The durable-but-broken case must not also claim memory semantics.
+    expect(screen.queryByText(/keeps nothing between requests/)).toBeNull();
+  });
+});

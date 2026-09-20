@@ -18,6 +18,9 @@ interface DataSheetProps {
  * start over. Both are destructive-ish, so both are behind a deliberate open.
  */
 export function DataSheet({ diagnostics, busy, onClose, onLoadExample, onReset }: DataSheetProps) {
+  // Kept in step with the note App shows above the fold: someone reading the
+  // sheet should not have to reconcile two different explanations of the same
+  // storage.
   return (
     <div className="sheet-backdrop" role="presentation" onClick={onClose}>
       <div
