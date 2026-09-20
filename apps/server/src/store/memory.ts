@@ -7,17 +7,11 @@ import type {
   User,
   UserPreferences,
 } from "@contextpack/shared";
-import { tripItemKey, type CustomItemRecord, type Store } from "./types";
+import { tripItemKey, type CustomItemRecord, type Store, type StoreSnapshot } from "./types";
 
-export interface StoreSnapshot {
-  version: 1;
-  users: User[];
-  trips: Trip[];
-  tripItems: TripItem[];
-  exceptions: ContextException[];
-  /** Added later; older stores simply have none. */
-  customItems?: CustomItemRecord[];
-}
+// Re-exported so existing imports from this module keep working; the shape lives
+// in `types.ts` because the durable adapters depend on it too.
+export type { StoreSnapshot };
 
 export function emptySnapshot(): StoreSnapshot {
   return { version: 1, users: [], trips: [], tripItems: [], exceptions: [], customItems: [] };

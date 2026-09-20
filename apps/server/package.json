@@ -8,10 +8,13 @@
     "start": "tsx src/index.ts",
     "seed": "tsx src/scripts/seed.ts",
     "doctor": "tsx src/scripts/doctor.ts",
+    "setup:aws": "tsx src/scripts/setup-aws.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1136.0",
+    "@aws-sdk/lib-dynamodb": "^3.1136.0",
     "@contextpack/shared": "*",
     "@typesafe-ai/sdk": "^0.6.0",
     "cors": "^2.8.5",

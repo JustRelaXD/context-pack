@@ -89,7 +89,13 @@ export interface AgentDiagnostic {
 
 export interface DiagnosticsResponse {
   /** `durable: false` means storage lives in the process and will not survive. */
-  store: { adapter: string; file?: string; durable: boolean };
+  store: { adapter: string; file?: string; table?: string; durable: boolean };
+  /**
+   * Present when the store could not be read: wrong credentials, a missing table,
+   * or the wrong region. This endpoint exists to explain a broken deployment, so
+   * it reports such a failure instead of becoming a 500 itself.
+   */
+  storeError?: string;
   weather: string;
   agent: AgentDiagnostic[];
   keys: Record<string, boolean | string>;
@@ -100,8 +106,13 @@ export interface DiagnosticsResponse {
    * endpoint shows up as an absent button rather than a button that errors.
    */
   resetEnabled: boolean;
-  /** Whether example history may be loaded (false once there is real history). */
-  canLoadExample: boolean;
+  /**
+   * Whether example history may be loaded (false once there is real history).
+   * `null` when the store could not be read, so nothing can be claimed either
+   * way — the UI treats that as "no", which hides the button rather than
+   * offering an action that would fail.
+   */
+  canLoadExample: boolean | null;
 }
 
 /** One item's parsed correction, enriched for display. */

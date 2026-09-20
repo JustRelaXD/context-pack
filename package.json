@@ -17,6 +17,7 @@
     "start": "npm run start -w @contextpack/server",
     "seed": "npm run seed -w @contextpack/server",
     "doctor": "npm run doctor -w @contextpack/server",
+    "setup:aws": "npm run setup:aws -w @contextpack/server",
     "demo": "npm run seed && npm run build && npm run start"
   },
   "devDependencies": {

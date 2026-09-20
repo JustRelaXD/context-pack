@@ -55,8 +55,21 @@ describe("adapter selection", () => {
   });
 
   it("rejects an unknown adapter by name rather than silently guessing", () => {
-    expect(() => createStore({ kind: "dynamodb" })).toThrow(/Unknown CONTEXTPACK_STORE/);
-    expect(() => createStore({ kind: "dynamodb" })).toThrow(/not wired up yet/);
+    expect(() => createStore({ kind: "postgres" })).toThrow(/Unknown CONTEXTPACK_STORE/);
+  });
+
+  it("refuses dynamodb without a table name, and names the variable to set", () => {
+    // Naming the missing setting matters: the alternative is a deploy that boots
+    // and then fails every request against a table called "undefined".
+    expect(() => createStore({ kind: "dynamodb", table: "" })).toThrow(/CONTEXTPACK_TABLE/);
+  });
+
+  it("reports dynamodb as durable and names the table", () => {
+    // Constructing the client does not call AWS, so this needs no credentials.
+    const described = describeStore(createStore({ kind: "dynamodb", table: "contextpack-test" }));
+    expect(described.adapter).toBe("dynamodb");
+    expect(described.table).toBe("contextpack-test");
+    expect(described.durable).toBe(true);
   });
 });
 

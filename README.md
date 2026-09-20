@@ -224,10 +224,10 @@ packages/shared  domain model, the prediction engine, pattern aggregation, the A
 data/store.json  local persistence (gitignored)
 ```
 
-Storage sits behind one `Store` interface with two adapters (`json`, `memory`). The `json` adapter
-serialises writes and writes via temp-file + rename, so an interrupted write can't corrupt the
-store. The API contract lives in `shared`, so a server field change breaks the build rather than
-silently rendering `undefined`.
+Storage sits behind one `Store` interface with three adapters (`json`, `memory`, `dynamodb`). The
+`json` adapter serialises writes and writes via temp-file + rename, so an interrupted write can't
+corrupt the store. The API contract lives in `shared`, so a server field change breaks the build
+rather than silently rendering `undefined`.
 
 ### Deploying to Vercel
 
@@ -292,7 +292,7 @@ Two consequences of running serverless, both stated rather than hidden:
 | Constraint | What happens |
 |---|---|
 | The filesystem is read-only apart from `/tmp` | `CONTEXTPACK_STORE=json` cannot work, so the adapter defaults to `memory` when it sees `VERCEL`. `/api/diagnostics` reports `durable: false` and the UI header shows `store: memory (resets)`. |
-| Nothing persists between invocations | A deployed instance starts with no history, so a visitor sees the cold-start view: honest 50/50 guesses rather than a fake track record. Run locally for the full seeded demo. |
+| Nothing persists between invocations | A deployed instance starts with no history, so a visitor sees the cold-start view: honest 50/50 guesses rather than a fake track record. Worse, taps can fail: a follow-up request may land on an instance that never saw the trip. Fixed by the DynamoDB adapter below — run `npm run setup:aws`. |
 
 The branch note: this repo has both `main` and `master`, and they are **different commits**. `master`
 is the original first commit, from before `vercel.json`, `api/index.ts` and the deploy build existed,
@@ -304,7 +304,49 @@ Set `TYPESAFE_API_KEY` and `GROQ_API_KEY` in the project's environment variables
 model-backed path in the deployment; without them it runs on the rule-based parser and templated
 sentences, which is still fully functional.
 
-Durable serverless state needs a real store — that is what the `dynamodb` adapter row below is for.
+#### Making the deployment durable
+
+A serverless platform runs more than one instance and they do not share memory, so with the default
+`memory` adapter a trip created on one instance does not exist on the next request. The symptom is
+instructive: `POST /api/trips/<id>/feedback` answers `400 {"error":"Unknown trip."}`, your taps stop
+being recorded, and nothing is ever learned — the app cannot get smarter on a URL where it forgets
+everything between requests.
+
+So the deployed app needs durable storage, and DynamoDB is the adapter for it:
+
+```bash
+CONTEXTPACK_TABLE=contextpack AWS_REGION=<your region> npm run setup:aws
+```
+
+That one command creates the table if it is missing (on-demand billing, so there is no capacity to
+pay for while idle), runs a real round trip through the **adapter** — including the property that
+matters, that a *second* store instance reads what the first one wrote — and prints the
+least-privilege IAM policy plus the variables to paste into Vercel. It writes under a dedicated
+`setup-check` user and deletes what it wrote, so running it against a table that already holds a
+history cannot damage it.
+
+Then set `CONTEXTPACK_STORE=dynamodb`, `CONTEXTPACK_TABLE`, `AWS_REGION`, `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY` in Vercel and redeploy.
+
+On cost, since it decides whether this is worth doing: DynamoDB's always-free tier covers 25 GB of
+storage and 25 read/write capacity units per month and, unlike most AWS free tiers, **it does not
+expire**. This app is single-user: about 110 KB of data and a handful of requests per interaction.
+There is nothing to activate and no bill at this scale — but note that creating any AWS account
+requires a payment method on file, and hackathon credits are not needed here.
+
+Two limits worth knowing rather than discovering: the adapter stores a user's history as **one
+item**, because every prediction reads all of it (see the comments in
+`apps/server/src/store/dynamodb.ts`), and a DynamoDB item is capped at 400 KB — so it fits one
+person's history comfortably and is not the layout for many users. It also applies a 350 KB guard
+and reports the size in kilobytes rather than passing AWS's rejection through.
+
+**What is verified, and what is not.** The adapter's behaviour is tested against a fake document
+client (12 tests: key layout, consistent reads, the conditional write that stops two instances
+clobbering each other, ordering, isolation between users, the size guard, reset). The bundled
+function was run with `CONTEXTPACK_STORE=dynamodb` and reached real DynamoDB, failing only on dummy
+credentials. What has never run is the live table against real credentials — that is what
+`npm run setup:aws` exists to do on your machine, because no AWS credential exists in the
+environment this was built in.
 
 ### The deploy path (what is and isn't done)
 
@@ -314,15 +356,15 @@ Built locally, deployable as-is to a single process — which is honest about wh
 |---|---|---|
 | UI | Vite build, served by the API | Amplify Hosting or the same process on App Runner |
 | API | Express on :4000 | API Gateway + Lambda |
-| Store | `json` adapter | `CONTEXTPACK_STORE=dynamodb` — same interface, one new adapter |
+| Store | `json` adapter | `CONTEXTPACK_STORE=dynamodb` — same interface, third adapter, already written |
 | Context + exceptions | Jev | unchanged |
 | Item proposals | Groq generates, Jev ranks | either half swaps behind `ItemSuggester` |
 | Phrasing | Groq | swap to Bedrock (same `ReasonPhraser` interface) |
 
 We deliberately did **not** wire up EventBridge, Step Functions, Cognito or OpenSearch. None of them
 are load-bearing for a CRUD app with one stats query, and a hackathon weekend spent on wiring them
-would have bought nothing the demo can show. `CONTEXTPACK_STORE=dynamodb` currently fails loudly
-rather than pretending to work.
+would have bought nothing the demo can show. `dynamodb` is wired, because a deployment genuinely
+cannot work without durable storage; the rest stay out until something needs them.
 
 ---
 

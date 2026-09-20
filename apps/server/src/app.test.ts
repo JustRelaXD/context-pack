@@ -152,3 +152,45 @@ describe("example history", () => {
     expect(again.status).toBe(409);
   });
 });
+
+describe("diagnostics when the store is unreachable", () => {
+  it("reports the failure rather than returning a 500 itself", async () => {
+    // The realistic cause of this is a deployed store with wrong credentials, a
+    // missing table, or the wrong region — and the endpoint you reach for when a
+    // deploy is misbehaving must not be the thing that breaks. A 500 here tells
+    // you nothing; the message tells you which variable to fix.
+    const working = createMemoryStore();
+    const broken = {
+      ...working,
+      listSamples: async (): Promise<never> => {
+        throw new Error("The security token included in the request is invalid.");
+      },
+    };
+
+    const service = createService({
+      store: broken,
+      agent: createAgentLayer({ CONTEXTPACK_AGENT: "heuristic" }),
+      weather: nullWeatherProvider,
+    });
+
+    const app = createServer(createApp({ service, store: broken }));
+    await new Promise<void>((resolve) => app.listen(0, "127.0.0.1", resolve));
+    const port = (app.address() as AddressInfo).port;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/diagnostics`);
+      expect(response.status).toBe(200);
+
+      const body = (await response.json()) as {
+        storeError?: string;
+        canLoadExample: boolean | null;
+      };
+      expect(body.storeError).toMatch(/security token/i);
+      // History is unknowable while the store is down, so nothing is claimed either
+      // way and the UI hides the action instead of offering one that would fail.
+      expect(body.canLoadExample).toBeNull();
+    } finally {
+      await new Promise<void>((resolve) => app.close(() => resolve()));
+    }
+  });
+});

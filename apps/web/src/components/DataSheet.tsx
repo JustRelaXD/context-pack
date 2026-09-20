@@ -53,6 +53,12 @@ export function DataSheet({ diagnostics, busy, onClose, onLoadExample, onReset }
                 <dd className="mono">{diagnostics.store.file}</dd>
               </div>
             ) : null}
+            {diagnostics.store.table ? (
+              <div className="fact">
+                <dt>Table</dt>
+                <dd className="mono">{diagnostics.store.table}</dd>
+              </div>
+            ) : null}
             <div className="fact">
               <dt>Weather</dt>
               <dd>{diagnostics.weather}</dd>
@@ -62,7 +68,15 @@ export function DataSheet({ diagnostics, busy, onClose, onLoadExample, onReset }
           <p className="muted small">Couldn't read the server's status.</p>
         )}
 
-        {diagnostics && !diagnostics.store.durable ? (
+        {/* The one case where the server is up but nothing works. Saying so here,
+            in the status sheet, beats a wall of failed taps with no explanation. */}
+        {diagnostics?.storeError ? (
+          <div className="notice notice-error" role="status">
+            <p>Storage is unreachable, so nothing can be saved yet: {diagnostics.storeError}</p>
+          </div>
+        ) : null}
+
+        {diagnostics && !diagnostics.store.durable && !diagnostics.storeError ? (
           <p className="muted tiny">
             Storage is in-process, so trips won't survive a restart. That's a deployment choice, not a
             bug — a local run keeps everything on disk.

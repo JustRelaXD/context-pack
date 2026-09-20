@@ -104,12 +104,26 @@ export function createApp(options: AppOptions) {
     "/api/diagnostics",
     asyncRoute(async (req, res) => {
       const diagnostics = service.diagnostics();
-      // "Can I load the example history?" is decided by whether this user has
-      // ever decided anything. Asking here means the UI never has to guess and
-      // never shows an action that would be refused.
-      const learning = await service.learning(userIdOf(req));
+
+      // This endpoint is what you reach for when a deploy is misbehaving, so it
+      // must not be the thing that 500s. Reading the store is the part that can
+      // fail — wrong credentials, missing table, wrong region — and reporting
+      // that failure *is* a successful diagnosis, so it comes back as 200 with
+      // the error attached instead of an opaque crash.
+      let canLoadExample: boolean | null = null;
+      let storeError: string | null = null;
+      try {
+        // "Can I load the example history?" is decided by whether this user has
+        // ever decided anything. Asking here means the UI never has to guess and
+        // never shows an action that would be refused.
+        canLoadExample = (await service.learning(userIdOf(req))).decided === 0;
+      } catch (error) {
+        storeError = error instanceof Error ? error.message : String(error);
+      }
+
       res.json({
         store: describeStore(store),
+        ...(storeError ? { storeError } : {}),
         weather: diagnostics.weather,
         agent: diagnostics.agent,
         keys: {
@@ -119,7 +133,7 @@ export function createApp(options: AppOptions) {
           GROQ_MODEL: process.env.GROQ_MODEL?.trim() || "openai/gpt-oss-20b",
         },
         resetEnabled: process.env.CONTEXTPACK_ALLOW_RESET === "1",
-        canLoadExample: learning.decided === 0,
+        canLoadExample,
       });
     }),
   );

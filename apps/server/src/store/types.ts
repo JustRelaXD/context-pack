@@ -16,6 +16,33 @@ export interface CustomItemRecord {
 }
 
 /**
+ * The whole persisted world, as one value.
+ *
+ * Both durable adapters (json and dynamodb) store exactly this, which is what
+ * keeps the deployed app and the local app the same program rather than two
+ * implementations that agree by inspection.
+ */
+export interface StoreSnapshot {
+  version: 1;
+  users: User[];
+  trips: Trip[];
+  tripItems: TripItem[];
+  exceptions: ContextException[];
+  /** Added later; older stores simply have none. */
+  customItems?: CustomItemRecord[];
+}
+
+/** Which adapter actually got constructed, for logging and diagnostics. */
+export interface StoreDescription {
+  adapter: string;
+  file?: string;
+  /** Present for the DynamoDB adapter. */
+  table?: string;
+  /** False when the data lives only in this process and will vanish. */
+  durable: boolean;
+}
+
+/**
  * Everything the app persists, behind one interface.
  *
  * This exists so the deployed version can swap in DynamoDB without the

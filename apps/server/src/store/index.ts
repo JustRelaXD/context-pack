@@ -1,14 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { createJsonStore, type JsonStore } from "./json";
-import { createMemoryStore, type StoreSnapshot } from "./memory";
-import type { Store } from "./types";
+import { createMemoryStore } from "./memory";
+import { createDynamoStore, type DynamoStore } from "./dynamodb";
+import type { Store, StoreDescription, StoreSnapshot } from "./types";
 
 export * from "./types";
 export { createMemoryStore, emptySnapshot } from "./memory";
-export type { MemoryStore, StoreSnapshot } from "./memory";
+export type { MemoryStore } from "./memory";
 export { createJsonStore } from "./json";
 export type { JsonStore, JsonStoreOptions } from "./json";
+export { createDynamoStore, ItemTooLargeError } from "./dynamodb";
+export type { DynamoStore, DynamoStoreOptions } from "./dynamodb";
 
 /**
  * Walk up to the repo root so the data file has one predictable home no matter
@@ -44,6 +47,12 @@ export interface CreateStoreOptions {
   file?: string;
   /** Seed state for the memory adapter. */
   seed?: StoreSnapshot;
+  /** Table name for the dynamodb adapter. Falls back to CONTEXTPACK_TABLE. */
+  table?: string;
+  /** Region for the dynamodb adapter. Falls back to AWS_REGION via the SDK. */
+  region?: string;
+  /** Override the DynamoDB endpoint, e.g. LocalStack or DynamoDB Local. */
+  endpoint?: string;
 }
 
 /**
@@ -81,24 +90,36 @@ export function createStore(options: CreateStoreOptions = {}): Store {
     return createJsonStore({ file });
   }
 
-  throw new Error(
-    `Unknown CONTEXTPACK_STORE "${kind}". Supported: json (default), memory. ` +
-      `A DynamoDB adapter is the next deploy step and is not wired up yet.`,
-  );
-}
+  if (kind === "dynamodb") {
+    const table = options.table ?? process.env.CONTEXTPACK_TABLE;
+    if (!table?.trim()) {
+      throw new Error(
+        "CONTEXTPACK_STORE=dynamodb needs the table name: set CONTEXTPACK_TABLE (or pass it explicitly).",
+      );
+    }
+    return createDynamoStore({
+      table: table.trim(),
+      region: options.region ?? process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION,
+      endpoint: options.endpoint ?? process.env.CONTEXTPACK_DYNAMODB_ENDPOINT,
+    });
+  }
 
-export interface StoreDescription {
-  adapter: string;
-  file?: string;
-  /** False when the data lives only in this process and will vanish. */
-  durable: boolean;
+  throw new Error(
+    `Unknown CONTEXTPACK_STORE "${kind}". Supported: json (default), memory, dynamodb.`,
+  );
 }
 
 /** Exposed for diagnostics: which adapter actually got constructed. */
 export function describeStore(store: Store): StoreDescription {
+  const dynamo = store as Partial<DynamoStore>;
+  if (typeof dynamo.table === "string" && typeof dynamo.getTrip === "function") {
+    return { adapter: "dynamodb", table: dynamo.table, durable: true };
+  }
+
   const json = store as Partial<JsonStore>;
   if (typeof json.flush === "function" && typeof json.file === "string") {
     return { adapter: "json", file: json.file, durable: true };
   }
+
   return { adapter: "memory", durable: false };
 }
