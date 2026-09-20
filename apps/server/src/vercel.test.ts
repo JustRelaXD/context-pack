@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import handler from "./vercel";
+import handler, { withApiPrefix } from "./vercel";
 
 /**
  * These tests exist because this exact file was broken in production.
@@ -86,5 +86,35 @@ describe("serverless entry point", () => {
     const response = await fetch(`${base}/api/definitely-not-a-route`);
     expect(response.status).toBe(404);
     expect(response.headers.get("content-type")).toContain("application/json");
+  });
+
+  /**
+   * The platform's rewrite routes `/api/*` here, but a rewrite is permitted to
+   * pass the *destination* path, which would leave Express looking at `/health`
+   * and 404ing everything. The entry normalises it, so the deploy is correct
+   * whichever way the platform behaves — a difference worth pinning down here,
+   * because it is invisible locally and unambiguous in production.
+   */
+  it("answers the same route with the /api prefix stripped off", async () => {
+    const stripped = await fetch(`${base}/health`);
+    expect(stripped.status).toBe(200);
+    const body = (await stripped.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+  });
+});
+
+describe("withApiPrefix", () => {
+  it.each([
+    ["/api/health", "/api/health"],
+    ["/api/trips/abc/feedback", "/api/trips/abc/feedback"],
+    ["/api", "/api"],
+    ["/api?limit=5", "/api?limit=5"],
+    ["/health", "/api/health"],
+    ["/trips/abc", "/api/trips/abc"],
+    ["/", "/api"],
+    [undefined, "/api"],
+    ["health", "/api/health"],
+  ])("normalises %s to %s", (input, expected) => {
+    expect(withApiPrefix(input)).toBe(expected);
   });
 });

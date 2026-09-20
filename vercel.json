@@ -2,12 +2,5 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "installCommand": "npm ci --include=dev",
-  "buildCommand": "npm ci --include=dev && npm run build -w @contextpack/web",
-  "outputDirectory": "apps/web/dist",
-  "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/api"
-    }
-  ]
+  "buildCommand": "npm ci --include=dev && node scripts/deploy-build.mjs"
 }

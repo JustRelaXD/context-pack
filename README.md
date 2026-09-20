@@ -231,16 +231,42 @@ silently rendering `undefined`.
 
 ### Deploying to Vercel
 
-The repo ships with `vercel.json` and `api/index.ts`, so a Git-connected Vercel project needs one
-thing from you: **Framework Preset must be `Other`.** The *Express* preset is the wrong fit and will
-fail — it looks for a conventional single-file Express entry, whereas this is a monorepo whose server
-binds a port, loads a `.env`, traps signals and flushes a file store. None of that exists in a
-serverless invocation.
+The repo ships with `vercel.json` and `scripts/deploy-build.mjs`, so a Git-connected project needs
+three settings from you and nothing else:
 
-`api/index.ts` is the deployment target: one function that Express routes internally, with
-`/api/*` rewritten to it. It deliberately does **not** import `server/src/index.ts` — that file calls
-`app.listen()` and exports nothing, which is what produces
-`FUNCTION_INVOCATION_FAILED` on every path, including `/api/health`.
+| Setting | Value | Why |
+|---|---|---|
+| **Framework Preset** | `Other` | The *Express* preset looks for a conventional single-file Express entry, whereas this is a monorepo whose server binds a port, loads a `.env` and flushes a file store — none of which exists in a serverless invocation. `vercel.json` pins `framework: null`, so `Other` agrees with the repo instead of fighting it. |
+| **Root Directory** | empty (`./`) | `vercel.json` lives at the root. Point this at a workspace and Vercel never reads it, so none of the commands below apply. |
+| **Production Branch** | `main` | See the note below. |
+
+`api/index.ts` is the deployment target: one function that Express routes internally. It
+deliberately does **not** import `server/src/index.ts` — that file calls `app.listen()` and exports
+nothing, which is what produces `FUNCTION_INVOCATION_FAILED` on every path, including `/api/health`.
+
+The build is a script rather than the platform's default pipeline, because the default pipeline
+cannot ship this repo's imports. It writes Vercel's **Build Output API** by hand:
+
+- **The function is one bundled file with no runtime imports** (esbuild, ~4 MB). The platform
+transpiled `apps/server/src/*.ts` but left `@contextpack/shared` as an external import pointing at
+TypeScript source, then shipped without it, so the deploy died on a missing
+`node_modules/@contextpack/shared/src/index.ts`. Bundling removes the whole class of problem: nothing
+to resolve at invocation, and no dependency tree to walk on a cold start. Verified by copying the
+function into an empty directory with no `node_modules` anywhere above it and driving it over HTTP.
+- **The function normalises its own path.** A rewrite may hand a function the destination path
+(`/health`) instead of the original (`/api/health`), which would 404 every route. The entry adds the
+prefix when it is missing, so the deploy is correct either way — and a test pins both shapes.
+- **`installCommand` is `npm ci --include=dev`.** `--include=dev` because `NODE_ENV=production` makes
+npm omit devDependencies, which is why a plain `npm install` died with `sh: 1: vite: not found`.
+`npm ci` because node_modules should be decided by the lockfile rather than by ambient config: one
+build arrived resolving `vite` but not the plugin declared next to it in the same `package.json`,
+which no install command explains. The build command runs the install again itself, so the build
+reconstructs the inputs it was promised instead of trusting the step before it.
+- **The build does not use `@vitejs/plugin-react`.** It provides Fast Refresh, which is a dev-server
+feature; `jsx: react-jsx` means esbuild — bundled with Vite — already compiles the JSX, so the dev
+server imports it and the build never resolves it. That plugin was the second failure, and removing
+the import removed it: deleting the package from an installed tree still produces a byte-identical
+bundle.
 
 Two non-obvious build details, both of which failed in that container before they were understood.
 
@@ -267,6 +293,12 @@ Two consequences of running serverless, both stated rather than hidden:
 |---|---|
 | The filesystem is read-only apart from `/tmp` | `CONTEXTPACK_STORE=json` cannot work, so the adapter defaults to `memory` when it sees `VERCEL`. `/api/diagnostics` reports `durable: false` and the UI header shows `store: memory (resets)`. |
 | Nothing persists between invocations | A deployed instance starts with no history, so a visitor sees the cold-start view: honest 50/50 guesses rather than a fake track record. Run locally for the full seeded demo. |
+
+The branch note: this repo has both `main` and `master`, and they are **different commits**. `master`
+is the original first commit, from before `vercel.json`, `api/index.ts` and the deploy build existed,
+so a project that deploys from it builds code this section does not describe and fails for reasons
+found nowhere in these notes. Deploy from `main`. GitHub refuses to let a plain `git push` delete
+`master` while it is the repository's default branch, which is why it is still there.
 
 Set `TYPESAFE_API_KEY` and `GROQ_API_KEY` in the project's environment variables if you want the
 model-backed path in the deployment; without them it runs on the rule-based parser and templated

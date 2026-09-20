@@ -52,8 +52,24 @@ function application(): Express {
   return cached;
 }
 
+/**
+ * Make the incoming path look the way the Express routes expect.
+ *
+ * The platform's rewrite sends `/api/*` to this function, but a rewrite is
+ * allowed to hand the function the *destination* path instead of the original
+ * one. Express routes here are absolute (`/api/health`), so normalising once at
+ * the entry is better than registering every route twice or discovering the
+ * difference as a wall of 404s after deploying.
+ */
+function withApiPrefix(url: string | undefined): string {
+  if (!url || url === "/") return "/api";
+  if (url === "/api" || url.startsWith("/api/") || url.startsWith("/api?")) return url;
+  return `/api${url.startsWith("/") ? url : `/${url}`}`;
+}
+
 /** Vercel's Node runtime calls this with Node's request and response objects. */
 export default function handler(req: IncomingMessage, res: ServerResponse): void {
+  req.url = withApiPrefix(req.url);
   try {
     // An Express app *is* a request listener; the cast is only because Express
     // types its own Request/Response subtypes more narrowly than the platform
@@ -84,3 +100,6 @@ export default function handler(req: IncomingMessage, res: ServerResponse): void
 
 /** Exposed so the entry can be exercised in tests without a platform. */
 export { application as createServerlessApp };
+
+/** Exposed so the prefix handling can be tested directly. */
+export { withApiPrefix };

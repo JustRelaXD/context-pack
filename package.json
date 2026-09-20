@@ -13,12 +13,14 @@
     "dev:server": "npm run dev -w @contextpack/server",
     "dev:web": "npm run dev -w @contextpack/web",
     "build": "npm run build -w @contextpack/web",
+    "build:deploy": "node scripts/deploy-build.mjs",
     "start": "npm run start -w @contextpack/server",
     "seed": "npm run seed -w @contextpack/server",
     "doctor": "npm run doctor -w @contextpack/server",
     "demo": "npm run seed && npm run build && npm run start"
   },
   "devDependencies": {
+    "esbuild": "^0.28.2",
     "typescript": "^5.6.3"
   },
   "engines": {
